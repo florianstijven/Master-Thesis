@@ -1,0 +1,211 @@
+---
+title: "Colon Case Study"
+author: "Florian Stijven"
+date: "27-3-2022"
+output: pdf_document
+---
+
+```{r, echo=FALSE}
+source(file = "density_functions.R")
+library(purrr)
+library(flexsurv)
+library(Surrogate)
+library(tidyverse)
+library(survival)
+library(mvtnorm)
+```
+
+```{r}
+colon
+data = colon %>% select(id, rx, time, etype, time, status)
+data = data %>% mutate(rx = ifelse(rx == "Obs", 0, 1))
+data = data %>% pivot_wider(id_cols = id, names_from = etype, values_from = c(time, status, rx))
+data = data %>% select(time_1, time_2, rx_1, status_1, status_2)
+data = data %>% mutate(time_1 = time_1/365, time_2 = time_2/365)
+data = as.data.frame(data)
+```
+
+```{r}
+marg_loglik_llog_part(data[data$rx_1 == 1, ], 0.6, c(4, 5), rep(1.7, 2), prec = 20)
+marg_loglik_wb_part(data[data$rx_1 == 1, ], 0.8, c(4, 5), c(2,2), prec = 20)
+marg_loglik_gg_part(data[data$rx_1 == 1, ], 0.9, c(4, 5), c(0.5,0.5), c(1,1), 
+                    prec = 20)
+```
+
+
+# Loglogistic
+
+## Estimation
+
+```{r}
+llog_fit_ctrl = fit_llog_part(data[data$rx_1 == 0, ], inits = c(1.2, 1.3, 1.6,
+                                                                -0.4, -0.4),
+                              maxit = 30, prec = 50)
+llog_fit_trt = fit_llog_part(data[data$rx_1 == 1, ], inits = c(1.2, 1.3, 1.6,
+                                                                0.53, 0.53), 
+                             maxit = 30, prec = 20)
+```
+## Goodness of fit marginally
+
+```{r}
+par(mfrow = c(2,2))
+grid = seq(0.001, 10, 0.1)
+km_s0 = survfit(formula = Surv(time = time_1, event = status_1)~1, 
+                data = data, subset = rx_1 == 0)
+alpha_s0 = exp(llog_fit_ctrl$par[2])
+beta_s0 = exp(llog_fit_ctrl$par[4])
+dens = 1 - pllogis(q = grid, shape = beta_s0, scale = alpha_s0)
+plot(km_s0)
+lines(grid, dens, col = "red")
+
+km_s1 = survfit(formula = Surv(time = time_1, event = status_1)~1, 
+                data = data, subset = rx_1 == 1)
+alpha_s1 = exp(llog_fit_trt$par[2])
+beta_s1 = exp(llog_fit_trt$par[4])
+dens = 1 - pllogis(q = grid, shape = beta_s1, scale = alpha_s1)
+plot(km_s0)
+lines(grid, dens, col = "red")
+
+km_t0 = survfit(formula = Surv(time = time_2, event = status_2)~1, 
+                data = data, subset = rx_1 == 0)
+alpha_t0 = exp(llog_fit_ctrl$par[3])
+beta_t0 = exp(llog_fit_ctrl$par[5])
+dens = 1 - pllogis(q = grid, shape = beta_t0, scale = alpha_t0)
+plot(km_t0)
+lines(grid, dens, col = "red")
+
+km_t1 = survfit(formula = Surv(time = time_2, event = status_2)~1, 
+                data = data, subset = rx_1 == 1)
+alpha_t1 = exp(llog_fit_trt$par[3])
+beta_t1 = exp(llog_fit_trt$par[5])
+dens = 1 - pllogis(q = grid, shape = beta_t1, scale = alpha_t1)
+plot(km_t1)
+lines(grid, dens, col = "red")
+```
+
+# Weibull
+
+## Estimation
+
+```{r}
+wb_fit_ctrl = fit_wb_part(data[data$rx_1 == 0, ], inits = c(2, 1.4, 1.5,
+                                                               0.8, 0.8),
+                              maxit = 30, prec = 20)
+wb_fit_trt = fit_wb_part(data[data$rx_1 == 1, ], inits = c(2, 1.4, 1.5,
+                                                               0.8, 0.8), 
+                             maxit = 30, prec = 20)
+```
+
+```{r}
+par(mfrow = c(2,2))
+grid = seq(0.001, 10, 0.1)
+km_s0 = survfit(formula = Surv(time = time_1, event = status_1)~1, 
+                data = data, subset = rx_1 == 0)
+lambda_s0 = exp(wb_fit_ctrl$par[2])
+k_s0 = exp(wb_fit_ctrl$par[4])
+dens = 1 - pweibull(q = grid, shape = k_s0, scale = lambda_s0)
+plot(km_s0)
+lines(grid, dens, col = "red")
+
+km_s1 = survfit(formula = Surv(time = time_1, event = status_1)~1, 
+                data = data, subset = rx_1 == 1)
+lambda_s1 = exp(wb_fit_trt$par[2])
+k_s1 = exp(wb_fit_trt$par[4])
+dens = 1 - pweibull(q = grid, shape = k_s1, scale = lambda_s1)
+plot(km_s0)
+lines(grid, dens, col = "red")
+
+km_t0 = survfit(formula = Surv(time = time_2, event = status_2)~1, 
+                data = data, subset = rx_1 == 0)
+lambda_t0 = exp(wb_fit_ctrl$par[3])
+k_t0 = exp(wb_fit_ctrl$par[5])
+dens = 1 - pweibull(q = grid, shape = k_t0, scale = lambda_t0)
+plot(km_t0)
+lines(grid, dens, col = "red")
+
+km_t1 = survfit(formula = Surv(time = time_2, event = status_2)~1, 
+                data = data, subset = rx_1 == 1)
+lambda_t1 = exp(wb_fit_trt$par[3])
+k_t1 = exp(wb_fit_trt$par[5])
+dens = 1 - pweibull(q = grid, shape = k_t1, scale = lambda_t1)
+plot(km_t1)
+lines(grid, dens, col = "red")
+```
+
+## Sensitivity Analysis
+
+```{r}
+rho13 = (exp(wb_fit_ctrl$par[1]) - 1)/(exp(wb_fit_ctrl$par[1]) + 1)
+rho24 = (exp(wb_fit_trt$par[1]) - 1)/(exp(wb_fit_trt$par[1]) + 1)
+grid = seq(-1, 1, 0.2)
+Pos.Def.Matrices(T0S0 = rho13, T1S1 = rho24,
+                 T0T1 = grid, S0S1 = grid, T1S0 = grid, T0S1 = grid)
+posdef_gen_matrices = Generated.Matrices[Generated.Matrices$Pos.Def.Status == 1,]
+rho_delta = numeric()
+for(i in 1:nrow(posdef_gen_matrices)){
+  num = posdef_gen_matrices[i, "T0S0"] + posdef_gen_matrices[i, "T1S1"] - posdef_gen_matrices[i, "T1S0"] - posdef_gen_matrices[i, "T0S1"]
+  denom = 2*sqrt((1 - posdef_gen_matrices[i, "T0T1"])*
+                   (1 - posdef_gen_matrices[i, "S0S1"]))
+  rho_delta = c(rho_delta, num/denom)
+}
+hist(rho_delta)
+```
+
+# Generalized Gamma
+
+## Estimation
+
+```{r}
+gg_fit_ctrl = fit_gg_part(data[data$rx_1 == 0, ], 
+                          inits = c(2, 1.4, 1.5, 0.8, 0.8, 0, 0),
+                              maxit = 30, prec = 20)
+gg_fit_trt = fit_gg_part(data[data$rx_1 == 1, ], 
+                         inits = c(2, 1.4, 1.5, 0.8, 0.8, 0, 0), 
+                             maxit = 30, prec = 20)
+```
+
+
+```{r}
+par(mfrow = c(2,2))
+grid = seq(0.001, 10, 0.1)
+km_s0 = survfit(formula = Surv(time = time_1, event = status_1)~1, 
+                data = data, subset = rx_1 == 0)
+mu_s0 = gg_fit_ctrl$par[2]
+sigma_s0 = exp(gg_fit_ctrl$par[4])
+Q_s0 = exp(gg_fit_ctrl$par[6])
+dens = 1 - pgengamma(q = grid, mu = mu_s0, sigma = sigma_s0,
+                     Q = Q_s0)
+plot(km_s0)
+lines(grid, dens, col = "red")
+
+km_s1 = survfit(formula = Surv(time = time_1, event = status_1)~1, 
+                data = data, subset = rx_1 == 1)
+mu_s1 = gg_fit_trt$par[2]
+sigma_s1 = exp(gg_fit_trt$par[4])
+Q_s1 = exp(gg_fit_trt$par[6])
+dens = 1 - pgengamma(q = grid, mu = mu_s1, sigma = sigma_s1,
+                     Q = Q_s1)
+plot(km_s0)
+lines(grid, dens, col = "red")
+
+km_t0 = survfit(formula = Surv(time = time_2, event = status_2)~1, 
+                data = data, subset = rx_1 == 0)
+mu_t0 = gg_fit_ctrl$par[3]
+sigma_t0 = exp(gg_fit_ctrl$par[5])
+Q_t0 = exp(gg_fit_ctrl$par[7])
+dens = 1 - pgengamma(q = grid, mu = mu_t0, sigma = sigma_t0,
+                     Q = Q_t0)
+plot(km_t0)
+lines(grid, dens, col = "red")
+
+km_t1 = survfit(formula = Surv(time =time_2, event = status_2)~1, 
+                data = data, subset = rx_1 == 1)
+mu_t1 = gg_fit_trt$par[3]
+sigma_t1 = exp(gg_fit_trt$par[5])
+Q_t1 = exp(gg_fit_trt$par[7])
+dens = 1 - pgengamma(q = grid, mu = mu_t1, sigma = sigma_t1,
+                     Q = Q_t1)
+plot(km_t1)
+lines(grid, dens, col = "red")
+```
+

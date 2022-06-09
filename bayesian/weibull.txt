@@ -1,0 +1,11 @@
+model {
+	for (i in 1:N) {
+		lambda[i] <- exp(beta0 + beta1*x1[i] + beta2*x2[i])
+		y[i] ~ dinterval(t[i], lim[i,])
+		t[i] ~ dweib(rho, lambda[i])
+	}
+	beta0 ~ dnorm(0.0, 1.0E-4)
+	beta1 ~ dnorm(0.0, 1.0E-4)
+	beta2 ~ dnorm(0.0, 1.0E-4)
+	rho ~ dgamma(1.0E-3, 1.0E-3)
+}

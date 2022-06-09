@@ -1,0 +1,146 @@
+---
+title: "Myeloid Case Study"
+author: "Florian Stijven"
+date: "3-4-2022"
+output: pdf_document
+---
+
+```{r, echo=FALSE}
+#do parallel computations?
+par_comput = TRUE
+source(file = "density_functions.R")
+source(file = "information_theoretic_functions_new.R")
+library(purrr)
+library(flexsurv)
+library(Surrogate)
+library(tidyverse)
+library(survival)
+library(mvtnorm)
+myeloid
+table(is.na(myeloid$txtime))
+table(is.na(myeloid$crtime))
+table(is.na(myeloid$rltime))
+#time to response is most complete
+myeloid$crtime = myeloid$rltime
+```
+
+```{r}
+#put data in correct format
+data = myeloid %>% select(crtime, futime, trt, death)
+data = data %>% mutate(cr = ifelse(is.na(crtime), 0, 1), 
+                       trt = ifelse(trt == "A", 0, 1),
+                       crtime = ifelse(is.na(crtime), futime, crtime)) %>% 
+  select(crtime, futime, trt, cr, death)
+data = data %>% mutate(crtime = crtime/365, futime = futime/365)
+data = as.data.frame(na.omit(data))
+```
+Some exploration with KM-estimates.
+
+```{r}
+hist(data$crtime)
+hist(data$futime)
+diff = data$futime - data$crtime
+hist(diff[diff > 0])
+plot(survfit(Surv(crtime, cr)~strata(trt), data))
+plot(survfit(Surv(futime, death)~strata(trt), data))
+```
+
+
+```{r}
+new_data = data
+par(mfrow = c(2,2))
+fit_s0 = flexsurvspline(formula = Surv(crtime, cr)~1, data = data, 
+                         subset = data$trt == 0, k = 2, scale = "hazard")
+plot(fit_s0, main = "S_0")
+new_data[new_data$trt == 0, 1] = 1 - predict(fit_s0, type = "survival",
+                                               newdata = data[1,], 
+                                               times = data[data$trt == 0, 1])$.pred[[1]][,2]
+fit_s1 = flexsurvspline(formula = Surv(crtime, cr)~1, data = data, 
+                         subset = data$trt == 1, k = 2, scale = "hazard")
+new_data[new_data$trt == 1, 1] = 1 - predict(fit_s1, type = "survival",
+                                               newdata = data[1,], 
+                                               times = data[data$trt == 1, 1])$.pred[[1]][,2]
+plot(fit_s1, main = "S_1")
+fit_t0 = flexsurvspline(formula = Surv(futime, death)~1, data = data, 
+                         subset = data$trt == 0, k = 2, scale = "hazard")
+new_data[new_data$trt == 0, 2] = 1 - predict(fit_t0, type = "survival",
+                                               newdata = data[1,], 
+                                               times = data[data$trt == 0, 2])$.pred[[1]][,2]
+plot(fit_t0, main = "T_0")
+fit_t1 = flexsurvspline(formula = Surv(futime, death)~1, data = data, 
+                         subset = data$trt == 1, k = 2, scale = "hazard")
+new_data[new_data$trt == 1, 2] = 1 - predict(fit_t1, type = "survival",
+                                               newdata = data[4,], 
+                                               times = data[data$trt == 1, 2])$.pred[[1]][,2]
+plot(fit_t1, main = "T_1")
+```
+
+
+```{r}
+plot(fit_s0, main = "S_0", type = "survival", t = seq(0, 40, 0.1), 
+     xlim = c(0, 40))
+abline(a = 0, b = 0, col = "gray")
+plot(fit_s0, main = "S_0", type = "hazard", t = seq(0, 40, 0.1), 
+     xlim = c(0, 40), ylim  =c(0, 1))
+
+plot(fit_t0, main = "T_0", type = "survival", t = seq(0, 40, 0.1), 
+     xlim = c(0, 40))
+abline(a = 0, b = 0, col = "gray")
+plot(fit_t0, main = "T_0", type = "hazard", t = seq(0, 40, 0.1), 
+     xlim = c(0, 40), ylim  =c(0, 1))
+
+plot(fit_s1, main = "S_1", type = "survival", t = seq(0, 40, 0.1), 
+     xlim = c(0, 40))
+abline(a = 0, b = 0, col = "gray")
+plot(fit_s1, main = "S_1", type = "hazard", t = seq(0, 40, 0.1), 
+     xlim = c(0, 40), ylim  =c(0, 1))
+
+plot(fit_t1, main = "T_1", type = "survival", t = seq(0, 40, 0.1), 
+     xlim = c(0, 40))
+abline(a = 0, b = 0, col = "gray")
+plot(fit_t1, main = "T_1", type = "hazard", t = seq(0, 40, 0.1), 
+     xlim = c(0, 40), ylim  =c(0, 1))
+```
+
+```{r}
+cop_fit_ctrl = fit_copula(data = new_data[new_data$trt == 0,], inits = 0.5)
+cop_fit_trt = fit_copula(data = new_data[new_data$trt == 1,], inits = 0.5)
+
+plot(new_data[new_data$trt == 0,]$crtime, new_data[new_data$trt == 0,]$futime)
+abline(a = 0, b = 1)
+points(new_data[new_data$trt == 0 & new_data$cr == 1 & new_data$death == 1,]$crtime, 
+       new_data[new_data$trt == 0 & new_data$cr == 1 & new_data$death == 1,]$futime,
+       col = "red")
+
+plot(new_data[new_data$trt == 1,]$crtime, new_data[new_data$trt == 1,]$futime)
+abline(a = 0, b = 1)
+points(new_data[new_data$trt == 1 & new_data$cr == 1 & new_data$death == 1,]$crtime, 
+       new_data[new_data$trt == 1 & new_data$cr == 1 & new_data$death == 1,]$futime,
+       col = "red")
+
+gauss_copula = copula::ellipCopula(family = "normal", param = 0.885, dim = 2, dispstr = "un")
+X = copula::rCopula(600, gauss_copula)
+cens = X[,1] < 0.8 & X[,2] < 0.8
+plot(X[cens,])
+rho13 = (exp(cop_fit_ctrl$par[1]) - 1)/(exp(cop_fit_ctrl$par[1]) + 1)
+rho24 = (exp(cop_fit_trt$par[1]) - 1)/(exp(cop_fit_trt$par[1]) + 1)
+```
+
+
+```{r}
+grid = seq(-1, 1, 0.2)
+Pos.Def.Matrices(T0S0 = rho13, T1S1 = rho24,
+                 T0T1 = grid, S0S1 = grid, T1S0 = grid, T0S1 = grid)
+# Generated.Matrices = readRDS(file = "many_matrices.RData")
+posdef_gen_matrices = Generated.Matrices[Generated.Matrices$Pos.Def.Status == 1,]
+# saveRDS(object = Generated.Matrices, file = "many_matrices.RData")
+rho_delta = numeric()
+for(i in 1:nrow(posdef_gen_matrices)){
+  num = posdef_gen_matrices[i, "T0S0"] + posdef_gen_matrices[i, "T1S1"] - posdef_gen_matrices[i, "T1S0"] - posdef_gen_matrices[i, "T0S1"]
+  denom = 2*sqrt((1 - posdef_gen_matrices[i, "T0T1"])*
+                   (1 - posdef_gen_matrices[i, "S0S1"]))
+  rho_delta = c(rho_delta, num/denom)
+}
+hist(rho_delta)
+```
+

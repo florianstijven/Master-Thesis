@@ -1,0 +1,368 @@
+---
+title: "Causal-inference framework for time-to-event surrogate and true endpoints"
+author: "Florian Stijven"
+date: "18-3-2022"
+output: 
+  beamer_presentation:
+    theme: "Madrid"
+header-includes:
+  - \usepackage{amsmath}
+  - \usepackage{booktabs}
+  - \usepackage{graphicx}
+  - \logo{\includegraphics[width=1.5cm]{UHasselt_logo.png}}
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+
+#parameters
+rho12 = 0.1
+rho13 = 0.95
+rho14 = 0.1
+rho23 = 0.1
+rho24 = 0.95
+rho34 = 0.1
+Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+lambda_s0 = 4
+lambda_s1 = 7
+lambda_t0 = 10
+lambda_t1 = 12
+k_s0 = 2
+k_s1 = 2
+k_t0 = 2.5
+k_t1 = 2.5
+```
+
+## Introduction
+
+- Further exploration gaussian copula model
+- 3 cases with unidentifiable correlations fixed, and identifiable correlations varied
+  + to see effect on association between $\Delta S$ and $\Delta T$
+- Association assessed by 
+  + regression line $E[\Delta T | \Delta S]$
+  + individual causal association
+- Two measures for quantifying ICA:
+  + First one based on information theory: $R_h$
+  + Second one directly follows from copula model: $\rho_{\Delta}$
+
+
+## Joint model
+
+- Joint distribution of potential outcomes:
+$$f(S_0, S_1, T_0, T_1) = c(\textbf{u}, \Sigma) \cdot f_{S_0}(S_0) \cdot f_{S_1}(S_1) \cdot f_{T_0}(T_0) \cdot f_{T_1}(T_1)$$
+where $c(\textbf{u}, \Sigma)$ is a gaussian copula
+- Marginal distributions for $S_0$, $S_1$, $T_0$ and $T_1$
+  + $f_{S_0}(S_0)$, $f_{S_1}(S_1)$, $f_{T_0}(T_0)$ and $f_{T_1}(T_1)$
+  + e.g. log-normal, log-logistic, Weibull...
+  + are identifiable
+
+## Marginal Distributions
+
+- $S_0 \sim Weibull(\lambda = 4, k = 2)$
+  + $E[S_0] = 3.54$
+- $S_1 \sim Weibull(\lambda = 7, k = 2)$
+  + $E[S_1] = 6.20$
+- $T_0 \sim Weibull(\lambda = 10, k = 2.5)$
+  + $E[T_0] = 8.87$
+- $T_1 \sim Weibull(\lambda = 12, k = 2.5)$
+  + $E[T_1] = 10.65$
+
+
+## Marginal Distributions (ctd.)
+
+
+```{r, echo=FALSE}
+par(mfrow = c(2,1))
+x = seq(from = 0.0001, to = 25, length.out = 1000)
+plot(x, dweibull(x, k_s0, lambda_s0), type = "l")
+lines(x, dweibull(x, k_s1, lambda_s1), col = "red")
+plot(x, dweibull(x, k_t0, lambda_t0), type = "l")
+lines(x, dweibull(x, k_t1, lambda_t1), col = "red")
+```
+
+
+## Case 1
+
+- small positive unobservable correlations
+- \[
+  \Sigma = 
+  \begin{pmatrix}
+    1 & 0.1 & \rho_{S_0, T_0} & 0.1\\
+    0.1 & 1 & 0.1 & \rho_{S_1, T_1} \\
+    \rho_{S_0, T_0} & 0.1 & 1 & 0.1 \\
+    0.1 & \rho_{S_1, T_1} & 0.1 & 1 \\
+  \end{pmatrix}
+\]
+- $\rho_{S_0, T_0}$ and $\rho_{S_1, T_1}$ $\in \{0, 0.3, 0.6, 0.9, 0.95\}$
+
+## Case 1 (ctd.)
+
+```{r, echo=FALSE, out.width="90%"}
+par(mfrow = c(2, 3))
+
+ICC_AA_sensitivity = readRDS("ICC_AA_sensitivity.RData")
+for(j in 1:5){
+  temp_list = ICC_AA_sensitivity[[j]]
+  #should be done for each value of AA
+  densities_st = temp_list$densities_st
+  delta_s = temp_list$delta_s
+  delta_s_unique = unique(delta_s[delta_s < 15 & delta_s > - 5])
+  delta_t = temp_list$delta_t
+  delta_t_pred = numeric()
+  delta_t_ll = numeric()
+  delta_t_ul = numeric()
+  h = delta_s[2] - delta_s[1]
+  for(i in 1:length(delta_s_unique)){
+    #initialize everything
+    delta_s_predictor = delta_s_unique[i]
+    select_dens = (delta_s == delta_s_predictor)
+    temp_dens = densities_st[select_dens]
+    temp_delta_t = delta_t[select_dens]
+    #compute conditional expected value
+    mass = h*sum(temp_dens)
+    delta_t_pred = c(delta_t_pred, h*(temp_delta_t %*% temp_dens)/mass)
+    #compute cdf, which is used to compute prediction intervals
+    temp_cdf = cumsum(h*temp_dens/mass)
+    delta_t_ll = c(delta_t_ll, tail(temp_delta_t[temp_cdf <= 0.025], 1))
+    delta_t_ul = c(delta_t_ul, head(temp_delta_t[temp_cdf >= 0.975], 1))
+  }
+  plot(delta_s_unique, delta_t_pred, type = "l", ylim = c(-10, 15),
+       main = paste0("rho_13 = rho_24 = ", temp_list$extra_args$Sigma[1,3], 
+                     "; R_h =  ", round(temp_list$ICC, 3)),
+       xlab = "Delta_S", ylab = "Delta_T")
+  lines(delta_s_unique, delta_t_ll, col = "red")
+  lines(delta_s_unique, delta_t_ul, col = "red")
+}
+```
+
+
+## Case 2
+
+- larger positive unobservable correlations
+- \[
+  \Sigma = 
+  \begin{pmatrix}
+    1 & 0.2 & \rho_{S_0, T_0} & 0.15\\
+    0.2 & 1 & 0.15 & \rho_{S_1, T_1} \\
+    \rho_{S_0, T_0} & 0.15 & 1 & 0.2 \\
+    0.15 & \rho_{S_1, T_1} & 0.2 & 1 \\
+  \end{pmatrix}
+\]
+- $\rho_{S_0, T_0}$ and $\rho_{S_1, T_1}$ $\in \{0, 0.3, 0.6, 0.9, 0.94\}$
+
+## Case 2 (ctd.)
+
+```{r, echo=FALSE, out.width="90%"}
+par(mfrow = c(2, 3))
+
+ICC_AA_sensitivity = readRDS("ICC_AA_sensitivity_2.RData")
+for(j in 1:5){
+  temp_list = ICC_AA_sensitivity[[j]]
+  #should be done for each value of AA
+  densities_st = temp_list$densities_st
+  delta_s = temp_list$delta_s
+  delta_s_unique = unique(delta_s[delta_s < 15 & delta_s > - 5])
+  delta_t = temp_list$delta_t
+  delta_t_pred = numeric()
+  delta_t_ll = numeric()
+  delta_t_ul = numeric()
+  h = delta_s[2] - delta_s[1]
+  for(i in 1:length(delta_s_unique)){
+    #initialize everything
+    delta_s_predictor = delta_s_unique[i]
+    select_dens = (delta_s == delta_s_predictor)
+    temp_dens = densities_st[select_dens]
+    temp_delta_t = delta_t[select_dens]
+    #compute conditional expected value
+    mass = h*sum(temp_dens)
+    delta_t_pred = c(delta_t_pred, h*(temp_delta_t %*% temp_dens)/mass)
+    #compute cdf, which is used to compute prediction intervals
+    temp_cdf = cumsum(h*temp_dens/mass)
+    delta_t_ll = c(delta_t_ll, tail(temp_delta_t[temp_cdf <= 0.025], 1))
+    delta_t_ul = c(delta_t_ul, head(temp_delta_t[temp_cdf >= 0.975], 1))
+  }
+  plot(delta_s_unique, delta_t_pred, type = "l", ylim = c(-10, 15),
+       main = paste0("rho_13 = rho_24 = ", temp_list$extra_args$Sigma[1,3], 
+                     "; R_h =  ", round(temp_list$ICC, 3)),
+       xlab = "Delta_S", ylab = "Delta_T")
+  lines(delta_s_unique, delta_t_ll, col = "red")
+  lines(delta_s_unique, delta_t_ul, col = "red")
+}
+```
+
+## Case 3
+
+- negative unobservable correlations
+  + might be less plausible
+- \[
+  \Sigma = 
+  \begin{pmatrix}
+    1 & -0.2 & \rho_{S_0, T_0} & -0.15\\
+    -0.2 & 1 & -0.15 & \rho_{S_1, T_1} \\
+    \rho_{S_0, T_0} & -0.15 & 1 & -0.2 \\
+    -0.15 & \rho_{S_1, T_1} & -0.2 & 1 \\
+  \end{pmatrix}
+\]
+- $\rho_{S_0, T_0}$ and $\rho_{S_1, T_1}$ $\in \{0, 0.3, 0.6, 0.9, 0.94\}$
+
+## Case 3 (ctd.)
+
+```{r, echo=FALSE, out.width="90%"}
+par(mfrow = c(2, 3))
+
+ICC_AA_sensitivity = readRDS("ICC_AA_sensitivity_3.RData")
+for(j in 1:5){
+  temp_list = ICC_AA_sensitivity[[j]]
+  #should be done for each value of AA
+  densities_st = temp_list$densities_st
+  delta_s = temp_list$delta_s
+  delta_s_unique = unique(delta_s[delta_s < 15 & delta_s > - 5])
+  delta_t = temp_list$delta_t
+  delta_t_pred = numeric()
+  delta_t_ll = numeric()
+  delta_t_ul = numeric()
+  h = delta_s[2] - delta_s[1]
+  for(i in 1:length(delta_s_unique)){
+    #initialize everything
+    delta_s_predictor = delta_s_unique[i]
+    select_dens = (delta_s == delta_s_predictor)
+    temp_dens = densities_st[select_dens]
+    temp_delta_t = delta_t[select_dens]
+    #compute conditional expected value
+    mass = h*sum(temp_dens)
+    delta_t_pred = c(delta_t_pred, h*(temp_delta_t %*% temp_dens)/mass)
+    #compute cdf, which is used to compute prediction intervals
+    temp_cdf = cumsum(h*temp_dens/mass)
+    delta_t_ll = c(delta_t_ll, tail(temp_delta_t[temp_cdf <= 0.025], 1))
+    delta_t_ul = c(delta_t_ul, head(temp_delta_t[temp_cdf >= 0.975], 1))
+  }
+  plot(delta_s_unique, delta_t_pred, type = "l", ylim = c(-10, 15),
+       main = paste0("rho_13 = rho_24 = ", temp_list$extra_args$Sigma[1,3], 
+                     "; R_h =  ", round(temp_list$ICC, 3)),
+       xlab = "Delta_S", ylab = "Delta_T")
+  lines(delta_s_unique, delta_t_ll, col = "red")
+  lines(delta_s_unique, delta_t_ul, col = "red")
+}
+```
+
+
+## Measures for ICA: $R_h$
+
+- defined as follows: $R_h = 1 - \exp(-2 \cdot I(\Delta S, \Delta T))$
+  + where $I(\Delta S, \Delta T) = \int f(\Delta S, \Delta T) \log \left(  \frac{f(\Delta S) \cdot f(\Delta T)}{f(\Delta S, \Delta T)} \right) d\Delta S d\Delta T$
+- $I(\Delta S, \Delta T)$, $f(\Delta S, \Delta T)$, $f(\Delta S)$ and $f(\Delta T)$ computed by numerical integration
+  + Error due to numerical approximation
+  + Very computer intensive
+
+\begin{tabular}{c|c c c c c}
+        \toprule
+               $ \rho_{S_0, T_0} = \rho_{S_1, T_1}$ & $0$ & $0.30$ & $0.60$ & $0.90$ & $0.95 \; (0.94)$ \\
+               \midrule
+         case 1 & 0.011 & 0.048 & 0.296 & 0.762 & 0.862 \\
+         case 2 & 0.029 & 0.035 & 0.302 & 0.837 & 0.932 \\
+         case 3 & 0.014 & 0.132 & 0.375 & 0.749 & 0.809 \\
+         \bottomrule
+\end{tabular}
+
+
+## Measures for ICA: $\rho_{\Delta}$
+
+- Consider normal transformed variables
+ + e.g. $q_{S_0} = \Phi^{-1}(F_{S_0}(S_0)) \sim N(0, 1)$
+- Gaussian copula: $(q_{S_0}, q_{S_1}, q_{T_0}, q_{T_1})' \sim N_{4}(\textbf{0}, \Sigma)$
+- $\rho_{\Delta} = cor(q_{S_1} - q_{S_0}, q_{T_1} - q_{T_0})$
+  + follows directly from $\Sigma$
+  + thus requires no numerical integration
+
+$$\rho_{\Delta} = \frac{\rho_{S_0, T_0} + \rho_{S_1, T_1} - \rho_{S_0, T_1} - \rho_{S_1, T_0}}{2 \sqrt{(1 - \rho_{T_0, T_1})(1 - \rho_{S_0, S_1})}}$$
+where 
+
+$$\rho_{S_0, T_0} = cor(q_{S_0}, q_{T_0}) $$
+
+## Measures for ICA: $\rho_{\Delta}$ (ctd.)
+
+- same ranking (except for $\rho_{S_0, T_0} = \rho_{S_1, T_1} = 0$)
+  + relation between $\rho_{\Delta}$ and $R_h$ should be explored further
+- BUT: interpretation not clear
+  + e.g. $S_0 < S_1$ does not necessarily imply $q_{S_0} < q_{S_1}$
+  + $\Rightarrow$ $\Delta S = S_1 - S_0 > 0$ does not necessarily imply $\Delta q_{S} = q_{S_1} - q_{S_0} > 0$
+
+\begin{tabular}{c|c c c c c}
+        \toprule
+               $ \rho_{S_0, T_0} = \rho_{S_1, T_1}$ & $0$ & $0.30$ & $0.60$ & $0.90$ & $0.95 \; (0.94)$ \\
+               \midrule
+         case 1 & -0.011 & 0.222 & 0.555 & 0.889 & 0.944 \\
+         case 2 & -0.188 & 0.188 & 0.563 & 0.934 & 0.988 \\
+         case 3 & 0.125 & 0.375 & 0.625 & 0.875 & 0.908 \\
+         \bottomrule
+\end{tabular}
+
+
+
+
+```{r, eval=FALSE, include=FALSE}
+cor_delta = function(Sigma){
+  num = Sigma[1, 3] + Sigma[2, 4] - Sigma[1, 4] - Sigma[2, 3]
+  denom = 2*sqrt((1 - Sigma[3, 4])*(1 - Sigma[1, 2]))
+  return(num/denom)
+}
+ICC_AA_sensitivity = readRDS("ICC_AA_sensitivity_3.RData")
+for (temp_list in ICC_AA_sensitivity){
+  Sigma = temp_list$extra_args$Sigma
+  print(cor_delta(Sigma))
+}
+
+```
+
+## To do
+
+- implement sensitivity analysis (as for normal-normal case etc.)
+- Then apply on real data set?
+- Issue of time orderings
+  + Approach $\pm$ suitable if $S$ is (almost) never censored by $T$ (OS)
+  + So $S << T$: e.g. time-to-response ($S$) and death ($T$)
+  
+## Explicit consideration of time orderings (Proposal)
+
+- illness-death type of model:
+\includegraphics[width=3cm]{illness_death.png}
+- induce association (within treatment group) by frailties $Z_{0, i}$ and $Z_{1, i}$ (e.g. for control group)
+  + $\lambda_{S_0, i}(t| Z_{0, i}) = \lambda_{0, S}(t) \cdot Z_{0, i} \cdot (A_i)$
+  + $\lambda_{T_0, i}(t| Z_{0, i}) = \lambda_{0, T}(t) \cdot Z_{0, i} \cdot (A_i)$
+  + $\lambda_{T_0 | S_0, i}(t| Z_{0, i}) = \lambda_{0, S | T}(t) \cdot Z_{0, i} \cdot I(T_0 > S_0) \cdot (A_i)$
+- Induce association across treatment groups by frailty ($A_i$) with fixed distribution
+  + Parameters of this distribution fixed at different values in sensitivity analysis
+  + e.g. $A_i \sim \Gamma(\theta, \theta)$ and fix $\theta$ at each iteration of sensitivity analysis
+- Very complex, difficult to fit $\to$ Bayesian estimation?
+
+
+
+
+## Appendix: Relative ranking
+
+- ranking from large to small association
+
+\tiny
+\begin{tabular}{c|c c c c c}
+        \toprule
+               $ \rho_{S_0, T_0} = \rho_{S_1, T_1}$ & $0$ & $0.30$ & $0.60$ & $0.90$ & $0.95 \; (0.94)$ \\
+               \midrule
+         case 1 & 0.011 (15) & 0.048 (11) & 0.296 (9) & 0.762 (5) & 0.862 (2)\\
+         case 2 & 0.029 (13) & 0.035 (12)& 0.302 (8) & 0.837 (3) & 0.932 (1)\\
+         case 3 & 0.014 (14) & 0.132 (10) & 0.375 (7) & 0.749 (6) & 0.809 (4) \\
+         \bottomrule
+\end{tabular}
+
+\begin{tabular}{c|c c c c c}
+        \toprule
+               $ \rho_{S_0, T_0} = \rho_{S_1, T_1}$ & $0$ & $0.30$ & $0.60$ & $0.90$ & $0.95 \; (0.94)$ \\
+               \midrule
+         case 1 & -0.011 (14) & 0.222 (11) & 0.555 (9) & 0.889 (5) & 0.944 (2) \\
+         case 2 & -0.188  (15) & 0.188 (12) & 0.563 (8) & 0.934 (3) & 0.988 (1) \\
+         case 3 & 0.125 (13) & 0.375 (10) & 0.625 (7) & 0.875 (6) & 0.908 (4) \\
+         \bottomrule
+\end{tabular}
+

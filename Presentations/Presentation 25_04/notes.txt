@@ -1,0 +1,12 @@
+To generalise the gaussian copula model to other copulas, I considered a D-vine copula model where the joint distribution is factorised is follows:
+	-> the f's are the marginal densities and c's are marginal or conditional copula densities
+the marginal densities for the observed data, so the bivariate density for the treated or control group directly follows from this D-vine copula
+this is very similar to the gaussian copula:
+	-> in the gaussian copula, two out of the six correlations were identifiable
+	-> now, two out of the six copulas are identifiable
+	-> and as was done for the four unidentifiable correlations in the gaussian copula model, the four unidentifiable copulas are part of the sensitivity analysis
+Moreover, if all six copulas are bivariate gaussian copulas, then this d-vine copula is equivalent to the gaussian copula model I considered previously
+	-> so this D-vine copula model really is more general than the gaussian copula model
+
+Looked at three copula models: so the gaussian copula, clayton copula and frank copula
+	-> for every copula model, I considered both models that do and do not take into account the time orderings.

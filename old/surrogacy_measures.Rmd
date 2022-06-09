@@ -1,0 +1,917 @@
+---
+title: "Surrogacy Measures"
+author: "Florian Stijven"
+date: "11-3-2022"
+output: pdf_document
+---
+
+```{r}
+library(mvtnorm)
+library(tidyverse)
+library(plotly)
+library(parallel)
+```
+
+
+# ICA
+
+## Full joint distribution
+
+```{r}
+density = function(Sigma, s0, s1, t0, t1,
+                   lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                   k_s0, k_s1, k_t0, k_t1){
+  u_0 = pweibull(q = s0, shape = k_s0, scale = lambda_s0)
+  u_1 = pweibull(q = s1, shape = k_s1, scale = lambda_s1)
+  v_0 = pweibull(q = t0, shape = k_t0, scale = lambda_t0)
+  v_1 = pweibull(q = t1, shape = k_t1, scale = lambda_t1)
+  dens_value = copula_density(u_0, u_1, v_0, v_1, Sigma)*
+           marginal_density_product(s0, s1, t0, t1,
+                                    lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                                    k_s0, k_s1, k_t0, k_t1)
+  if(is.nan(dens_value)) dens_value = 0
+  return(dens_value)
+}
+
+copula_density = function(u0, u1, v0, v1,
+                          Sigma){
+  # the q variables are the standard normal transformed variables
+  qs0 = qnorm(u0)
+  qs1 = qnorm(u1)
+  qt0 = qnorm(v0)
+  qt1 = qnorm(v1)
+  q = c(qs0, qs1, qt0, qt1)
+  #correlation matrix
+
+  #multivariate standard normal density
+  num = dmvnorm(x = q, mean = rep(0, 4), sigma = Sigma, checkSymmetry = FALSE)
+  #product of univariate standard normal densities
+  denom = dnorm(qs0)*dnorm(qs1)*dnorm(qt0)*dnorm(qt1)
+  #return copula density
+  return(num/denom)
+}
+
+marginal_density_product = function(s0, s1, t0, t1,
+                                    lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                                    k_s0, k_s1, k_t0, k_t1){
+  return(dweibull(x = s0, shape = k_s0, scale = lambda_s0)*
+           dweibull(x = s1, shape = k_s1, scale = lambda_s1)*
+           dweibull(x = t0, shape = k_t0, scale = lambda_t0)*
+           dweibull(x = t1, shape = k_t1, scale = lambda_t1))
+}
+```
+
+## Full joint distribution FAST
+
+```{r}
+density_fast = function(Sigma_det_root_inv, Sigma_inv, 
+                        s0, s1, t0, t1,
+                        lambda_s0, lambda_s1, 
+                        lambda_t0, lambda_t1,
+                        k_s0, k_s1, k_t0, k_t1){
+  qs_0 = qnorm(pweibull(q = s0, shape = k_s0, scale = lambda_s0))
+  qs_1 = qnorm(pweibull(q = s1, shape = k_s1, scale = lambda_s1))
+  qt_0 = qnorm(pweibull(q = t0, shape = k_t0, scale = lambda_t0))
+  qt_1 = qnorm(pweibull(q = t1, shape = k_t1, scale = lambda_t1))
+  z = matrix(c(qs_0, qs_1, qt_0, qt_1), nrow = 1)
+  weibull_product = k_s0*k_s1*k_t0*k_t1*
+    (lambda_s0**(-k_s0))*(lambda_s1**(-k_s1))*(lambda_t0**(-k_t0))*(lambda_t1**(-k_t1))*
+    (s0**(k_s0 - 1))*(s1**(k_s1 - 1))*(t0**(k_t0 - 1))*(t1**(k_t1 - 1))*
+    exp(-1*(((s0/lambda_s0)**k_s0) + ((s1/lambda_s1)**k_s1) + ((t0/lambda_t0)**k_t0) + ((t1/lambda_t1)**k_t1)))
+  dens_value = (Sigma_det_root_inv*
+           exp(-0.5*z%*%(Sigma_inv - diag(1, 4))%*%t(z))*
+           weibull_product)[1,1]
+  if(is.nan(dens_value)) dens_value = 0
+  return(dens_value)
+}
+```
+
+
+## Bivariate distribution of surrogates
+
+```{r}
+surrogate_density = function(s0, s1, rho12,
+                             lamnda_s0, lambda_s1, k_s0, k_s1){
+  u_0 = pweibull(q = s0, shape = k_s0, scale = lambda_s0)
+  u_1 = pweibull(q = s1, shape = k_s1, scale = lambda_s1)
+  dens_value = surrogate_copula_density(u_0, u_1, rho12)*
+    surrogate_marginal_density_product(s0, s1,
+                                       lambda_s0, lambda_s1, k_s0, k_s1)
+  if(is.nan(dens_value)) dens_value = 0
+  return(dens_value)
+  
+}
+
+surrogate_copula_density = function(u0, u1, rho12){
+  # the q variables are the standard normal transformed variables
+  qs0 = qnorm(u0)
+  qs1 = qnorm(u1)
+  q = c(qs0, qs1)
+  #correlation matrix
+  Sigma = matrix(data = c(1, rho12, rho12, 1), nrow = 2)
+  #multivariate standard normal density
+  num = dmvnorm(x = q, mean = c(0, 0), sigma = Sigma, checkSymmetry = FALSE)
+  #product of univariate standard normal densities
+  denom = dnorm(qs0)*dnorm(qs1)
+  #return copula density
+  return(num/denom)  
+}
+
+surrogate_marginal_density_product = function(s0, s1, 
+                                              lambda_s0, lambda_s1, k_s0, k_s1){
+  return(dweibull(x = s0, shape = k_s0, scale = lambda_s0)*
+           dweibull(x = s1, shape = k_s1, scale = lambda_s1))
+}
+```
+
+## Bivariate distribution of true outcome
+
+```{r}
+true_density = function(t0, t1, rho34,
+                             lamnda_t0, lambda_t1, k_t0, k_t1){
+  v_0 = pweibull(q = t0, shape = k_t0, scale = lambda_t0)
+  v_1 = pweibull(q = t1, shape = k_t1, scale = lambda_t1)
+  dens_value = surrogate_copula_density(v_0, v_1, rho34)*
+    surrogate_marginal_density_product(t0, t1,
+                                       lambda_t0, lambda_t1, k_t0, k_t1)
+  if(is.nan(dens_value)) dens_value = 0
+  return(dens_value)
+  
+}
+
+true_copula_density = function(v0, v1, rho34){
+  # the q variables are the standard normal transformed variables
+  qt0 = qnorm(v0)
+  qt1 = qnorm(v1)
+  q = c(qt0, qt1)
+  #correlation matrix
+  Sigma = matrix(data = c(1, rho34, rho34, 1), nrow = 2)
+  #multivariate standard normal density
+  num = dmvnorm(x = q, mean = c(0, 0), sigma = Sigma, checkSymmetry = FALSE)
+  #product of univariate standard normal densities
+  denom = dnorm(qt0)*dnorm(qt1)
+  #return copula density
+  return(num/denom)  
+}
+
+true_marginal_density_product = function(t0, t1, 
+                                              lambda_t0, lambda_t1, k_t0, k_t1){
+  return(dweibull(x = t0, shape = k_t0, scale = lambda_t0)*
+           dweibull(x = t1, shape = k_t1, scale = lambda_t1))
+}
+```
+
+
+
+# numerical integration
+
+## ice on S
+
+```{r}
+#distribution of delta S
+density_delta_s = function(delta, rho12,
+                           lambda_s0, lambda_s1, k_s0, k_s1, n = 1000){
+  upper = max(c(qweibull(0.9999, shape = k_s0, scale = lambda_s0),
+                qweibull(0.9999, shape = k_s1, scale = lambda_s1)))
+  s0 = seq(from = 0.0001, to = upper, length.out = n)
+  s1 = s0 + delta
+  h = s0[2] - s0[1]
+  mass = pmap_dbl(.l = list(s0 = s0, s1 = s1), .f = surrogate_density,
+                  rho12, lambda_s0, lambda_s1, k_s0, k_s1)
+  return(h*sum(mass))
+}
+```
+
+## ice on T
+
+```{r}
+#distribution of delta T
+density_delta_t = function(delta, rho34,
+                           lambda_t0, lambda_t1, k_t0, k_t1, n = 1000){
+  upper = max(c(qweibull(0.9999, shape = k_t0, scale = lambda_t0),
+                qweibull(0.9999, shape = k_t1, scale = lambda_t1)))
+  t0 = seq(from = 0.0001, to = upper, length.out = n)
+  t1 = t0 + delta
+  h = t0[2] - t0[1]
+  mass = pmap_dbl(.l = list(t0 = t0, t1 = t1), .f = true_density,
+                  rho34, lambda_t0, lambda_t1, k_t0, k_t1)
+  return(h*sum(mass))
+}
+```
+
+## ice on S and T
+
+```{r}
+density_true_deltas = function(delta_s, t0, t1, Sigma,
+                               lambda_s0, lambda_s1, k_s0, k_s1,
+                               lambda_t0, lambda_t1, k_t0, k_t1, n = 1000){
+  upper = max(c(qweibull(0.9999, shape = k_s0, scale = lambda_s0),
+                qweibull(0.9999, shape = k_s1, scale = lambda_s1)))
+  s0 = seq(from = 0.001, to = upper, length.out = n)
+  s1 = s0 + delta_s
+  h = s0[2] - s0[1]
+  Sigma_det_root_inv = (determinant(Sigma, logarithm = FALSE)$modulus)**-0.5
+  Sigma_det_root_inv = Sigma_det_root_inv[1]
+  Sigma_inv = solve(Sigma)
+  mass = pmap_dbl(.l = list(s0 = s0, s1 = s1), .f = density_fast, 
+                  Sigma_det_root_inv = Sigma_det_root_inv,
+                  Sigma_inv = Sigma_inv,
+                  t0 = t0, t1 = t1,
+                  lambda_s0 = lambda_s0, lambda_s1 = lambda_s1,
+                  lambda_t0 = lambda_t0, lambda_t1 = lambda_t1,
+                  k_s0 = k_s0, k_s1 = k_s1, k_t0 = k_t0, k_t1 = k_t1)
+  
+  return(h*sum(mass))
+}
+
+density_delta_st = function(delta_s, delta_t, Sigma,
+                            lambda_s0, lambda_s1, k_s0, k_s1,
+                            lambda_t0, lambda_t1, k_t0, k_t1, n = 1000){
+  upper = max(c(qweibull(0.9999, shape = k_t0, scale = lambda_t0),
+                qweibull(0.9999, shape = k_t1, scale = lambda_t1)))
+  t0 = seq(from = 0.001, to = upper, length.out = n)
+  t1 = t0 + delta_t
+  h = t0[2] - t0[1]
+  mass = pmap_dbl(.l = list(t0 = t0, t1 = t1), .f = density_true_deltas,
+                  Sigma = Sigma, delta_s = delta_s,
+                  lambda_s0 = lambda_s0, lambda_s1 = lambda_s1,
+                  lambda_t0 = lambda_t0, lambda_t1 = lambda_t1,
+                  k_s0 = k_s0, k_s1 = k_s1, k_t0 = k_t0, k_t1 = k_t1,
+                  n = n)
+  return(h*sum(mass))
+}
+```
+
+# Surrogacy measures
+
+## ICA
+
+```{r}
+ica_Rh = function(Sigma, lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                   k_s0, k_s1, k_t0, k_t1, n = 1000,
+                  par = TRUE){
+  
+
+  return(h*sum(mass))
+}
+
+mutual_information_point = function(delta_s, delta_t, Sigma, 
+                                    lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                                    k_s0, k_s1, k_t0, k_t1, n = 1000){
+  #joint density in (delta_s, delta_t)
+  f_xy = density_delta_st(delta_s = delta_s, delta_t = delta_t,
+                          Sigma = Sigma, lambda_s0 = lambda_s0, lambda_s1 = lambda_s1,
+                          lambda_t0 = lambda_t0, lambda_t1 = lambda_t1,
+                          k_s0 = k_s0, k_s1 = k_s1, k_t0 = k_t0, k_t1 = k_t1,
+                          n = n)
+  #marginal density in delta_s
+  f_x = density_delta_s(delta = delta_s, rho12 = Sigma[1,2],lambda_s0 = lambda_s0,
+                        lambda_s1 = lambda_s1, k_s0 = k_s0, k_s1 = k_s1,
+                        n = n)
+  #marginal density in delta_t
+  f_y = density_delta_t(delta = delta_t, rho34 = rho34, lambda_t0 = lambda_t0,
+                        lambda_t1 = lambda_t1, k_t0 = k_t0, k_t1 = k_t1,
+                        n = n)
+  #return value of integrand for mutual information
+  return(f_xy*log(f_xy/(f_x*f_y)))
+}
+
+mutual_information_surrogate = function(delta_t, Sigma, 
+                                    lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                                    k_s0, k_s1, k_t0, k_t1, n = 1000){
+  delta_s = seq(from = -20, to = 20, length.out = n)
+  h = delta_s[2] - delta_s[1]
+  mass = sapply(X = delta_s, FUN = mutual_information_point,
+                  Sigma = Sigma, delta_t = delta_t,
+                  lambda_s0 = lambda_s0, lambda_s1 = lambda_s1,
+                  lambda_t0 = lambda_t0, lambda_t1 = lambda_t1,
+                  k_s0 = k_s0, k_s1 = k_s1, k_t0 = k_t0, k_t1 = k_t1,
+                  n = n)
+  return(h*sum(mass))
+}
+```
+
+## Regression of delta T on delta S
+
+```{r}
+
+```
+
+
+
+
+# Testing
+
+```{r}
+#parameters
+rho12 = 0.2
+rho13 = 0.85
+rho14 = 0.1
+rho23 = 0.1
+rho24 = 0.85
+rho34 = 0.1
+Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+lambda_s0 = 4
+lambda_s1 = 7
+lambda_t0 = 12
+lambda_t1 = 14
+k_s0 = 2
+k_s1 = 3
+k_t0 = 4
+k_t1 = 6
+
+n = 300
+s0 = 2
+t0 = 5
+s1 = seq(from = 0.001, to = 60, length.out = n)
+t1 = seq(from = 0.001, to = 60, length.out = n)
+
+density_matrix = matrix(data = 0, nrow = n**2, ncol = 3)
+for(i in 1:n){
+  for(j in 1:n){
+    density_matrix[n*(i-1) + j, ] = c(s1[i], t1[j],
+                                         density(Sigma, s0, s1[i], t0, t1[j],
+                   lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                   k_s0, k_s1, k_t0, k_t1))
+  }
+}
+
+density_df = as.data.frame(x = density_matrix)
+colnames(density_df) = c("s1", "t1", "d")
+density_df %>% ggplot() + geom_contour(aes(x = s1, y = t1, z = d))
+```
+
+```{r}
+n = 300
+s0 = seq(from = 0.001, to = 25, length.out = n)
+s1 = seq(from = 0.001, to = 50, length.out = n)
+
+density_matrix = matrix(data = 0, nrow = n**2, ncol = 3)
+for(i in 1:n){
+  for(j in 1:n){
+    density_matrix[n*(i-1) + j, ] = c(s0[i], s1[j],
+                                      surrogate_density(s0[i], s1[j], rho12,
+                                                        lambda_s0, lambda_s1,
+                                                        k_s0, k_s1))
+  }
+}
+
+density_df = as.data.frame(x = density_matrix)
+colnames(density_df) = c("s0", "s1", "d")
+density_df %>% ggplot() + geom_contour(aes(x = s0, y = s1, z = d))
+
+
+plot_ly(x = s0, y = s1, z = matrix(density_df[,3], nrow = n)) %>% add_surface()
+```
+
+#Compute regression of S1 on S0
+
+```{r}
+s1_pred = numeric()
+h = s0[2] - s0[1]
+for(i in 1:n){
+  temp_matrix = density_matrix[density_matrix[,1] == s0[i],]
+  mass = h*sum(temp_matrix[,3])
+  s1_pred = c(s1_pred, h*(temp_matrix[,2] %*% temp_matrix[,3])/mass)
+}
+plot(s0, s1_pred, ylim = )
+
+```
+
+
+## Density of delta S
+
+```{r}
+delta = seq(from = -15, to = 15, length.out = 1000)
+dens_delta = sapply(delta, density_delta_s, rho12 = rho12, lambda_s0 = lambda_s0,
+                    lambda_s1 = 3, k_s0 = k_s0, k_s1 = k_s1)
+plot(delta, dens_delta)
+```
+
+## Density of delta T
+
+```{r}
+delta = seq(from = -15, to = 50, length.out = 1000)
+dens_delta = sapply(delta, density_true_deltas, Sigma = Sigma, 
+                    lambda_t0 = lambda_t0, lambda_t1 = lambda_t1,
+                    lambda_s0 = lambda_s0, lambda_s1 = lambda_s1,
+                    k_t0 = k_t0, k_t1 = k_t1, k_s0 = k_s0, k_s1 = k_s1,
+                    t0 = 10, t1 = 10)
+plot(delta, dens_delta)
+a = delta[2] - delta[1]
+sum(dens_delta)*a
+
+```
+
+# density of delta S and delta T
+
+```{r}
+library(parallel)
+a = Sys.time()
+extra_args = list(Sigma = Sigma, 
+                 lambda_s0 = lambda_s0, lambda_s1 = lambda_s1, 
+                 k_s0 = k_s0, k_s1 = k_s1,
+                 lambda_t0 = lambda_t0, lambda_t1 = lambda_t1, 
+                 k_t0 = k_t0, k_t1 = k_t1, n = 100)
+
+x = seq(from = -5, to = 5, length.out = 70)
+y = rep(x, each = 70)
+x = rep(x, 70)
+
+
+cl = makeCluster(6)
+clusterExport(cl, ls())
+clusterEvalQ(cl, library(mvtnorm))
+clusterEvalQ(cl, library(purrr))
+temp = clusterMap(cl = cl, fun = density_delta_st, delta_s = x, delta_t = y,
+           MoreArgs = extra_args)
+stopCluster(cl)
+temp = unlist(temp)
+b = Sys.time()
+
+density_df = data.frame(x = x, y = y, d = temp)
+density_df %>% ggplot() + geom_contour(aes(x = x, y = y, z = d))
+
+
+temp_matrix = matrix(data = temp, nrow = 70)
+persp(x = x[1:70], y = x[1:70], z = temp_matrix)
+plot_ly(x = x[1:70], y = x[1:70], z = temp_matrix) %>% add_surface()
+
+
+
+print(b - a)
+
+
+
+
+```
+
+```{r}
+precisions = seq(from = 20, to = 120, by = 50)
+cl = makeCluster(6)
+clusterExport(cl, ls())
+clusterEvalQ(cl, library(mvtnorm))
+clusterEvalQ(cl, library(purrr))
+ICC = 1:3
+for(i in 1:3){
+  x = seq(from = -15, to = 15, length.out = precisions[i])
+  x_new = x
+  y = rep(x, each = precisions[i])
+  x = rep(x, precisions[i])
+  h = x[2] - x[1]
+  
+  densities = clusterMap(cl = cl, fun = density_delta_st, 
+                              delta_s = x, delta_t = y,
+                              MoreArgs = extra_args)
+  densities = unlist(densities)
+  min_H_xy = h*h*sum(densities[densities > 0]*log(densities[densities > 0]))
+  
+  densities_delta_s = clusterApply(cl = cl, x = x_new, fun = density_delta_s,
+                                   rho12 = Sigma[1,2],
+                                   lambda_s0 = lambda_s0, lambda_s1 = lambda_s1, 
+                                   k_s0 = k_s0, k_s1 = k_s1, n = 200)
+  densities_delta_s = rep(unlist(densities_delta_s), precisions[i])
+  densities_delta_t = clusterApply(cl = cl, x = x_new, fun = density_delta_t,
+                                   rho34 = Sigma[3,4],
+                                   lambda_t0 = lambda_t0, lambda_t1 = lambda_t1, 
+                                   k_t0 = k_t0, k_t1 = k_t1, n = 200)
+  densities_delta_t = rep(unlist(densities_delta_t), each = precisions[i])
+  
+  H_ind_xy = h*h*sum(densities*log(densities_delta_s*densities_delta_t))
+  
+  ICC[i] = 1 - exp(-2*(min_H_xy - H_ind_xy))
+}
+stopCluster(cl)
+
+density_df = data.frame(x = x, y = y, d = densities)
+density_df %>% ggplot() + geom_contour(aes(x = x, y = y, z = d))
+
+
+temp_matrix = matrix(data = densities, nrow = 120)
+persp(x = x_new, y = x_new, z = temp_matrix)
+plot_ly(x = x_new, y = x_new, z = temp_matrix) %>% add_surface()
+
+plot(ICC)
+#ICC
+
+```
+
+# Sensitivity Analysis for Adjusted Association
+
+```{r}
+#see what influence the observable correlation has on the ICA
+new_cors = c(0, 0.30, 0.60, 0.90, 0.95)
+#parameters
+rho12 = 0.1
+rho13 = 0.95
+rho14 = 0.1
+rho23 = 0.1
+rho24 = 0.95
+rho34 = 0.1
+Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+lambda_s0 = 4
+lambda_s1 = 7
+lambda_t0 = 10
+lambda_t1 = 12
+k_s0 = 2
+k_s1 = 2
+k_t0 = 2.5
+k_t1 = 2.5
+#precision
+n_pres = 80
+
+#create objects to save results of this analysis to
+ICC_AA_sensitivity = list()
+for(i in 1:5){
+  print(i)
+  cl = makeCluster(5)
+  clusterExport(cl, ls())
+  clusterEvalQ(cl, library(mvtnorm))
+  clusterEvalQ(cl, library(purrr))
+  rho13 = new_cors[i]
+  rho24 = new_cors[i]
+  Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+  extra_args = list(Sigma = Sigma, 
+                 lambda_s0 = lambda_s0, lambda_s1 = lambda_s1, 
+                 k_s0 = k_s0, k_s1 = k_s1,
+                 lambda_t0 = lambda_t0, lambda_t1 = lambda_t1, 
+                 k_t0 = k_t0, k_t1 = k_t1, n = 100)
+  
+  x = seq(from = -20, to = 22, length.out = n_pres)
+  x_new = x
+  y = rep(x, each = n_pres)
+  x = rep(x, n_pres)
+  h = x[2] - x[1]
+  
+  densities = clusterMap(cl = cl, fun = density_delta_st, 
+                              delta_s = x, delta_t = y,
+                              MoreArgs = extra_args)
+  densities = unlist(densities)
+  print("densities finished")
+  min_H_xy = h*h*sum(densities[densities > 0]*log(densities[densities > 0]))
+  
+  densities_delta_s = clusterApply(cl = cl, x = x_new, fun = density_delta_s,
+                                   rho12 = Sigma[1,2],
+                                   lambda_s0 = lambda_s0, lambda_s1 = lambda_s1, 
+                                   k_s0 = k_s0, k_s1 = k_s1, n = 100)
+  densities_delta_s = rep(unlist(densities_delta_s), n_pres)
+  densities_delta_t = clusterApply(cl = cl, x = x_new, fun = density_delta_t,
+                                   rho34 = Sigma[3,4],
+                                   lambda_t0 = lambda_t0, lambda_t1 = lambda_t1, 
+                                   k_t0 = k_t0, k_t1 = k_t1, n = 100)
+  densities_delta_t = rep(unlist(densities_delta_t), each =n_pres)
+  
+  H_ind_xy = h*h*sum(densities*log(densities_delta_s*densities_delta_t))
+  
+  ICC = 1 - exp(-2*(min_H_xy - H_ind_xy))
+  stopCluster(cl)
+  print("ICC is")
+  print(ICC)
+  
+  temp_list = list(densities_st = densities,
+                   delta_s = x,
+                   delta_t = y,
+                   densities_delta_s = densities_delta_s,
+                   delta_s_marg = x_new,
+                   densities_delta_t = densities_delta_t,
+                   delta_t_marg = x_new,
+                   ICC = ICC,
+                   extra_args = extra_args)
+  ICC_AA_sensitivity[[i]] = temp_list
+}
+
+saveRDS(object = ICC_AA_sensitivity, file = "ICC_AA_sensitivity.RData")
+```
+
+## Compute regression of delta T on delta S
+
+```{r}
+ICC_AA_sensitivity = readRDS("ICC_AA_sensitivity.RData")
+for(j in 1:5){
+  temp_list = ICC_AA_sensitivity[[j]]
+  #should be done for each value of AA
+  densities_st = temp_list$densities_st
+  delta_s = temp_list$delta_s
+  delta_s_unique = unique(delta_s[delta_s < 15 & delta_s > - 5])
+  delta_t = temp_list$delta_t
+  delta_t_pred = numeric()
+  delta_t_ll = numeric()
+  delta_t_ul = numeric()
+  h = delta_s[2] - delta_s[1]
+  for(i in 1:length(delta_s_unique)){
+    #initialize everything
+    delta_s_predictor = delta_s_unique[i]
+    select_dens = (delta_s == delta_s_predictor)
+    temp_dens = densities_st[select_dens]
+    temp_delta_t = delta_t[select_dens]
+    #compute conditional expected value
+    mass = h*sum(temp_dens)
+    delta_t_pred = c(delta_t_pred, h*(temp_delta_t %*% temp_dens)/mass)
+    #compute cdf, which is used to compute prediction intervals
+    temp_cdf = cumsum(h*temp_dens/mass)
+    delta_t_ll = c(delta_t_ll, tail(temp_delta_t[temp_cdf <= 0.025], 1))
+    delta_t_ul = c(delta_t_ul, head(temp_delta_t[temp_cdf >= 0.975], 1))
+  }
+  plot(delta_s_unique, delta_t_pred, type = "l", ylim = c(-10, 15))
+  lines(delta_s_unique, delta_t_ll, col = "red")
+  lines(delta_s_unique, delta_t_ul, col = "red")
+}
+
+```
+
+## Plot bivariate distribution of delta S and delta T
+
+```{r}
+
+for(temp_list in ICC_AA_sensitivity){
+  x = temp_list$delta_s_marg
+  y = temp_list$delta_t_marg
+  dens_matrix = matrix(temp_list$densities_st, nrow = 80, byrow = TRUE)
+  persp(x, y, dens_matrix)
+  a = plot_ly(x = x, y = y, z = dens_matrix) %>% add_surface() 
+}
+a
+```
+
+
+## Sensitivity analysis repeated for different correlation matrices
+
+### Higher unobservable correlations
+
+```{r}
+#see what influence the observable correlation has on the ICA
+new_cors = c(0, 0.30, 0.60, 0.90, 0.94)
+#parameters
+rho12 = 0.2
+rho13 = 0.94
+rho14 = 0.15
+rho23 = 0.15
+rho24 = 0.94
+rho34 = 0.2
+Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+lambda_s0 = 4
+lambda_s1 = 7
+lambda_t0 = 10
+lambda_t1 = 12
+k_s0 = 2
+k_s1 = 2
+k_t0 = 2.5
+k_t1 = 2.5
+#precision
+n_pres = 80
+
+#create objects to save results of this analysis to
+ICC_AA_sensitivity = list()
+for(i in 1:5){
+  print(i)
+  cl = makeCluster(5)
+  clusterExport(cl, ls())
+  clusterEvalQ(cl, library(mvtnorm))
+  clusterEvalQ(cl, library(purrr))
+  rho13 = new_cors[i]
+  rho24 = new_cors[i]
+  Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+  extra_args = list(Sigma = Sigma, 
+                 lambda_s0 = lambda_s0, lambda_s1 = lambda_s1, 
+                 k_s0 = k_s0, k_s1 = k_s1,
+                 lambda_t0 = lambda_t0, lambda_t1 = lambda_t1, 
+                 k_t0 = k_t0, k_t1 = k_t1, n = 100)
+  
+  x = seq(from = -20, to = 22, length.out = n_pres)
+  x_new = x
+  y = rep(x, each = n_pres)
+  x = rep(x, n_pres)
+  h = x[2] - x[1]
+  
+  densities = clusterMap(cl = cl, fun = density_delta_st, 
+                              delta_s = x, delta_t = y,
+                              MoreArgs = extra_args)
+  densities = unlist(densities)
+  print("densities finished")
+  min_H_xy = h*h*sum(densities[densities > 0]*log(densities[densities > 0]))
+  
+  densities_delta_s = clusterApply(cl = cl, x = x_new, fun = density_delta_s,
+                                   rho12 = Sigma[1,2],
+                                   lambda_s0 = lambda_s0, lambda_s1 = lambda_s1, 
+                                   k_s0 = k_s0, k_s1 = k_s1, n = 100)
+  densities_delta_s = rep(unlist(densities_delta_s), n_pres)
+  densities_delta_t = clusterApply(cl = cl, x = x_new, fun = density_delta_t,
+                                   rho34 = Sigma[3,4],
+                                   lambda_t0 = lambda_t0, lambda_t1 = lambda_t1, 
+                                   k_t0 = k_t0, k_t1 = k_t1, n = 100)
+  densities_delta_t = rep(unlist(densities_delta_t), each =n_pres)
+  
+  H_ind_xy = h*h*sum(densities*log(densities_delta_s*densities_delta_t))
+  
+  ICC = 1 - exp(-2*(min_H_xy - H_ind_xy))
+  stopCluster(cl)
+  print("ICC is")
+  print(ICC)
+  
+  temp_list = list(densities_st = densities,
+                   delta_s = x,
+                   delta_t = y,
+                   densities_delta_s = densities_delta_s,
+                   delta_s_marg = x_new,
+                   densities_delta_t = densities_delta_t,
+                   delta_t_marg = x_new,
+                   ICC = ICC,
+                   extra_args = extra_args)
+  ICC_AA_sensitivity[[i]] = temp_list
+}
+
+saveRDS(object = ICC_AA_sensitivity, file = "ICC_AA_sensitivity_2.RData")
+```
+
+```{r}
+ICC_AA_sensitivity = readRDS("ICC_AA_sensitivity_2.RData")
+for(j in 1:5){
+  temp_list = ICC_AA_sensitivity[[j]]
+  #should be done for each value of AA
+  densities_st = temp_list$densities_st
+  delta_s = temp_list$delta_s
+  delta_s_unique = unique(delta_s[delta_s < 15 & delta_s > - 5])
+  delta_t = temp_list$delta_t
+  delta_t_pred = numeric()
+  delta_t_ll = numeric()
+  delta_t_ul = numeric()
+  h = delta_s[2] - delta_s[1]
+  for(i in 1:length(delta_s_unique)){
+    #initialize everything
+    delta_s_predictor = delta_s_unique[i]
+    select_dens = (delta_s == delta_s_predictor)
+    temp_dens = densities_st[select_dens]
+    temp_delta_t = delta_t[select_dens]
+    #compute conditional expected value
+    mass = h*sum(temp_dens)
+    delta_t_pred = c(delta_t_pred, h*(temp_delta_t %*% temp_dens)/mass)
+    #compute cdf, which is used to compute prediction intervals
+    temp_cdf = cumsum(h*temp_dens/mass)
+    delta_t_ll = c(delta_t_ll, tail(temp_delta_t[temp_cdf <= 0.025], 1))
+    delta_t_ul = c(delta_t_ul, head(temp_delta_t[temp_cdf >= 0.975], 1))
+  }
+  plot(delta_s_unique, delta_t_pred, type = "l", ylim = c(-10, 15))
+  lines(delta_s_unique, delta_t_ll, col = "red")
+  lines(delta_s_unique, delta_t_ul, col = "red")
+}
+
+```
+
+### Negative unobservable correlations
+
+```{r}
+#see what influence the observable correlation has on the ICA
+new_cors = c(0, 0.30, 0.60, 0.90, 0.94)
+#parameters
+rho12 = -0.2
+rho13 = 0.90
+rho14 = -0.15
+rho23 = -0.15
+rho24 = 0.90
+rho34 = -0.2
+Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+lambda_s0 = 4
+lambda_s1 = 7
+lambda_t0 = 10
+lambda_t1 = 12
+k_s0 = 2
+k_s1 = 2
+k_t0 = 2.5
+k_t1 = 2.5
+#precision
+n_pres = 80
+
+#create objects to save results of this analysis to
+ICC_AA_sensitivity = list()
+for(i in 1:5){
+  print(i)
+  cl = makeCluster(5)
+  clusterExport(cl, ls())
+  clusterEvalQ(cl, library(mvtnorm))
+  clusterEvalQ(cl, library(purrr))
+  rho13 = new_cors[i]
+  rho24 = new_cors[i]
+  Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+  extra_args = list(Sigma = Sigma, 
+                 lambda_s0 = lambda_s0, lambda_s1 = lambda_s1, 
+                 k_s0 = k_s0, k_s1 = k_s1,
+                 lambda_t0 = lambda_t0, lambda_t1 = lambda_t1, 
+                 k_t0 = k_t0, k_t1 = k_t1, n = 100)
+  
+  x = seq(from = -20, to = 22, length.out = n_pres)
+  x_new = x
+  y = rep(x, each = n_pres)
+  x = rep(x, n_pres)
+  h = x[2] - x[1]
+  
+  densities = clusterMap(cl = cl, fun = density_delta_st, 
+                              delta_s = x, delta_t = y,
+                              MoreArgs = extra_args)
+  densities = unlist(densities)
+  print("densities finished")
+  min_H_xy = h*h*sum(densities[densities > 0]*log(densities[densities > 0]))
+  
+  densities_delta_s = clusterApply(cl = cl, x = x_new, fun = density_delta_s,
+                                   rho12 = Sigma[1,2],
+                                   lambda_s0 = lambda_s0, lambda_s1 = lambda_s1, 
+                                   k_s0 = k_s0, k_s1 = k_s1, n = 100)
+  densities_delta_s = rep(unlist(densities_delta_s), n_pres)
+  densities_delta_t = clusterApply(cl = cl, x = x_new, fun = density_delta_t,
+                                   rho34 = Sigma[3,4],
+                                   lambda_t0 = lambda_t0, lambda_t1 = lambda_t1, 
+                                   k_t0 = k_t0, k_t1 = k_t1, n = 100)
+  densities_delta_t = rep(unlist(densities_delta_t), each =n_pres)
+  
+  H_ind_xy = h*h*sum(densities*log(densities_delta_s*densities_delta_t))
+  
+  ICC = 1 - exp(-2*(min_H_xy - H_ind_xy))
+  stopCluster(cl)
+  print("ICC is")
+  print(ICC)
+  
+  temp_list = list(densities_st = densities,
+                   delta_s = x,
+                   delta_t = y,
+                   densities_delta_s = densities_delta_s,
+                   delta_s_marg = x_new,
+                   densities_delta_t = densities_delta_t,
+                   delta_t_marg = x_new,
+                   ICC = ICC,
+                   extra_args = extra_args)
+  ICC_AA_sensitivity[[i]] = temp_list
+}
+
+saveRDS(object = ICC_AA_sensitivity, file = "ICC_AA_sensitivity_3.RData")
+```
+
+```{r}
+ICC_AA_sensitivity = readRDS("ICC_AA_sensitivity_3.RData")
+for(j in 1:5){
+  temp_list = ICC_AA_sensitivity[[j]]
+  #should be done for each value of AA
+  densities_st = temp_list$densities_st
+  delta_s = temp_list$delta_s
+  delta_s_unique = unique(delta_s[delta_s < 15 & delta_s > - 5])
+  delta_t = temp_list$delta_t
+  delta_t_pred = numeric()
+  delta_t_ll = numeric()
+  delta_t_ul = numeric()
+  h = delta_s[2] - delta_s[1]
+  for(i in 1:length(delta_s_unique)){
+    #initialize everything
+    delta_s_predictor = delta_s_unique[i]
+    select_dens = (delta_s == delta_s_predictor)
+    temp_dens = densities_st[select_dens]
+    temp_delta_t = delta_t[select_dens]
+    #compute conditional expected value
+    mass = h*sum(temp_dens)
+    delta_t_pred = c(delta_t_pred, h*(temp_delta_t %*% temp_dens)/mass)
+    #compute cdf, which is used to compute prediction intervals
+    temp_cdf = cumsum(h*temp_dens/mass)
+    delta_t_ll = c(delta_t_ll, tail(temp_delta_t[temp_cdf <= 0.025], 1))
+    delta_t_ul = c(delta_t_ul, head(temp_delta_t[temp_cdf >= 0.975], 1))
+  }
+  plot(delta_s_unique, delta_t_pred, type = "l", ylim = c(-10, 15))
+  lines(delta_s_unique, delta_t_ll, col = "red")
+  lines(delta_s_unique, delta_t_ul, col = "red")
+}
+
+```
+
+# Marginal distributions of simulation
+
+```{r}
+x = seq(from = 0.0001, to = 25, length.out = 1000)
+plot(x, dweibull(x, k_s0, lambda_s0), type = "l")
+lines(x, dweibull(x, k_s1, lambda_s1), col = "red")
+plot(x, dweibull(x, k_t0, lambda_t0), type = "l")
+lines(x, dweibull(x, k_t1, lambda_t1), col = "red")
+```
+
+
+
+
+
+
+

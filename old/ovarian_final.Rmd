@@ -1,0 +1,521 @@
+---
+title: "Sensitivity Analysis - Ovarian"
+author: "Florian Stijven"
+date: "29-3-2022"
+output: pdf_document
+---
+ 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE)
+source(file = "density_functions.R")
+source(file = "information_theoretic_functions_new.R")
+library(purrr)
+library(flexsurv)
+library(Surrogate)
+library(tidyverse)
+library(survival)
+library(mvtnorm)
+data("Ovarian")
+```
+
+```{r}
+#put data in correct format
+data = Ovarian %>% select(Pfs, Surv, Treat, PfsInd, SurvInd)
+data = data %>% filter(Pfs <= Surv)
+table(data$PfsInd, data$SurvInd)
+data %>% filter(Surv == Pfs & PfsInd == 1 & SurvInd == 1) %>% nrow()
+data %>% filter(PfsInd == 1 & SurvInd == 1) %>% nrow()
+```
+
+Recode the data is interval censored data. So we assume (possibly wrongly) that no patient survives more than 20 years, and that progression occurs within 10 years. 
+
+
+
+
+# Introduction
+
+The \texttt{Ovarian} data set contains the progression-free survival times (PFS), and overall survival times (OS) for 1192 ovarian cancer patients. One observation is left out because the PFS is longer than OS, which is not possible. Both PFS and OS can be censored. Due to the nature of the endpoints, PFS is always smaller than or equal to OS. For 200 out of the 1191 observations, the observed times for PFS and OS are equal. With the copula based approach, this atomicity is however ignored. Moreover, the copula based approach does not impose ordering restrictions. Depending on the data, this could lead to issues.
+
+Also note that due to the nature of the endpoints, PFS and OS are by definition associated. Indeed, PFS is a composite endpoint combining time-to-progression and time-to-death, whichever comes first.
+
+Several conventional parametric models were considered for modelling the marginal survival functions: Weibull, log-logistic and generalized gamma. However, these all fail to describe the data well. This is caused by the fact that in the data, the hazard is initially very high, but later becomes very small. This is seen on the marginal survival functions were intially there is a large drop, but after some time the survival functions become almost constant at about 0.1-0.2. Therefore, a Royston-Parmar spline model is fitted using a two-stage approach.
+
+# Model Fitting
+
+## Royston-Parmar Spline Model
+
+The Royston-Parmar spline model is fitted for each potential outcome \textit{separately}, so four times. A simplification would be fit it once for PFS and once for OS, and then include a treatment effect into the model. This however entails and additional PH-assumption which is not needed anywhere in the further approach.  
+
+All Royston-Parmar spline models are fitted with two knots using the \texttt{flexsurvspline} function from the \texttt{flexsurv} package. So each survival function is modelled by 4 parameters. As can be seen in the plots below, the KM-estimate and parametric estimate of the respective survival functions are very near, indicating that this parametric model is appropriate. 
+
+```{r}
+new_data = data
+par(mfrow = c(2,2))
+fit_s0 = flexsurvspline(formula = Surv(Pfs, PfsInd)~1, data = data, 
+                         subset = data$Treat == 0, k = 2, scale = "hazard")
+plot(fit_s0, main = "S_0")
+new_data[new_data$Treat == 0, 1] = 1 - predict(fit_s0, type = "survival",
+                                               newdata = data[1,], 
+                                               times = data[data$Treat == 0, 1])$.pred[[1]][,2]
+fit_s1 = flexsurvspline(formula = Surv(Pfs, PfsInd)~1, data = data, 
+                         subset = data$Treat == 1, k = 2, scale = "hazard")
+new_data[new_data$Treat == 1, 1] = 1 - predict(fit_s1, type = "survival",
+                                               newdata = data[4,], 
+                                               times = data[data$Treat == 1, 1])$.pred[[1]][,2]
+plot(fit_s1, main = "S_1")
+fit_t0 = flexsurvspline(formula = Surv(Surv, SurvInd)~1, data = data, 
+                         subset = data$Treat == 0, k = 2, scale = "hazard")
+new_data[new_data$Treat == 0, 2] = 1 - predict(fit_t0, type = "survival",
+                                               newdata = data[1,], 
+                                               times = data[data$Treat == 0, 2])$.pred[[1]][,2]
+plot(fit_t0, main = "T_0")
+fit_t1 = flexsurvspline(formula = Surv(Surv, SurvInd)~1, data = data, 
+                         subset = data$Treat == 1, k = 2, scale = "hazard")
+new_data[new_data$Treat == 1, 2] = 1 - predict(fit_t1, type = "survival",
+                                               newdata = data[4,], 
+                                               times = data[data$Treat == 1, 2])$.pred[[1]][,2]
+plot(fit_t1, main = "T_1")
+```
+
+One particular issue with these data is that the maximum follow-up time is 2 years while a considerable proportion of patients survive past that point. The fitted parametric model however implies a survival and hazard function beyond two years. The survival and hazard function beyond those two years are however unobservable. 
+
+This is shown for $S_0$. The modelled survival function beyond the KM-estimate is implied by the model, but this is not verifiable. Still, this unverifiable part influences the metrics of surrogacy. However, it is not immediately clear how large this influence is. 
+
+```{r}
+par(mfrow = c(2,2))
+plot(fit_s0,type = "survival", t = seq(0, 15, 0.1), 
+     xlim = c(0, 15), main = "S_0", xlab = "Time", ylab = "S(t)")
+abline(a = 0, b = 0, col = "gray")
+
+plot(fit_t0, type = "survival", t = seq(0, 15, 0.1), 
+     xlim = c(0, 15), main = "S_1", xlab = "Time", ylab = "S(t)")
+abline(a = 0, b = 0, col = "gray")
+
+plot(fit_s1, type = "survival", t = seq(0, 15, 0.1), 
+     xlim = c(0, 15), main = "T_0", xlab = "Time", ylab = "S(t)")
+abline(a = 0, b = 0, col = "gray")
+
+plot(fit_t1, type = "survival", t = seq(0, 15, 0.1), 
+     xlim = c(0, 15), main = "T_1", xlab = "Time", ylab = "S(t)")
+abline(a = 0, b = 0, col = "gray")
+```
+
+
+## Copula Model
+
+The copula model is fitted in the second stage. To this end, the original PFS and OS times are transformed to uniform variables using the fitted survival functions. These uniform variables are then used to fit the copula model. 
+Two parameters are fitted with this copula model: $\rho_{S_0, T_0}$ and $\rho_{S_1, T_1}$. The other four correlation parameters are part of the sensitivity analysis. 
+
+```{r}
+cop_fit_ctrl = fit_copula(data = new_data[new_data$Treat == 0,], inits = 2.5)
+cop_fit_trt = fit_copula(data = new_data[new_data$Treat == 1,], inits = 2.5)
+rho13 = (exp(cop_fit_ctrl$par[1]) - 1)/(exp(cop_fit_ctrl$par[1]) + 1)
+rho24 = (exp(cop_fit_trt$par[1]) - 1)/(exp(cop_fit_trt$par[1]) + 1)
+```
+
+The observable correlations are `r rho13` for the control group, and `r rho24` for the treated group.
+
+## Goodness of fit
+
+The goodness of fit is checked by sampling from the fitted model, and comparing this sample with the original data. However, the original data are censored which complicates a direct comparison. The distribution of censoring indicators is therefore first estimated. Next, values are sampled from this distribution as to artificially censor the sample from the fitted model. In this way, the sample from the fitted model is comparable with the original data.
+
+```{r}
+#estimate survival function for censoring
+km_censor = flexsurvspline(Surv(pmax(Pfs, Surv), 1 - pmin(PfsInd, SurvInd))~1, 
+                           data = data, k = 3)
+#plot(km_censor)
+#sample from KM-curve
+U = runif(n = nrow(data))
+C = qsurvspline(p = U, gamma = km_censor$coefficients, knots = km_censor$knots)
+
+#sample from model for control
+data_temp = data[data$Treat == 0,]
+data_control = data_temp
+n_temp = nrow(data_temp)
+gauss_copula = copula::ellipCopula(family = "normal", param = rho13, dim = 2, dispstr = "un")
+X = copula::rCopula(n_temp, gauss_copula)
+data_temp$Pfs = pmin(qsurvspline(p = X[,1], gamma = fit_s0$coefficients, knots = fit_s0$knots), 
+                        C[1:n_temp])
+data_temp$Surv = pmin(qsurvspline(p = X[,2], gamma = fit_t0$coefficients, knots = fit_t0$knots),
+                         C[1:n_temp])
+cens = pmax(data_temp$Pfs, data_temp$Surv) == C[1:n_temp]
+#plot sample and true data
+par(mfrow = c(1,2))
+plot(data_temp$Pfs[!cens], data_temp$Surv[!cens], 
+     col = "red", xlim = c(0,2), ylim = c(0,2), 
+     main = "Fitted Model", xlab = "S_0", ylab = "T_0")
+points(data_temp$Pfs[cens], data_temp$Surv[cens])
+plot(data_control$Pfs[(data_control$SurvInd == 1)], 
+     data_control$Surv[(data_control$SurvInd == 1)], 
+     col = "red", xlim = c(0,2), ylim = c(0,2), 
+     main = "Observed Data", xlab = "S_0", ylab = "T_0")
+points(data_control$Pfs[!(data_control$SurvInd == 1)], data_control$Surv[!(data_control$SurvInd == 1)])
+
+#sample from model for control
+data_temp = data[data$Treat == 1,]
+data_control = data_temp
+n_temp = nrow(data_temp)
+gauss_copula = copula::ellipCopula(family = "normal", param = rho24, dim = 2, dispstr = "un")
+X = copula::rCopula(n_temp, gauss_copula)
+data_temp$Pfs = pmin(qsurvspline(p = X[,1], gamma = fit_s0$coefficients, knots = fit_s0$knots), 
+                        C[1:n_temp])
+data_temp$Surv = pmin(qsurvspline(p = X[,2], gamma = fit_t0$coefficients, knots = fit_t0$knots),
+                         C[1:n_temp])
+cens = pmax(data_temp$Pfs, data_temp$Surv) == C[1:n_temp]
+#plot sample and true data
+par(mfrow = c(1,2))
+plot(data_temp$Pfs[!cens], data_temp$Surv[!cens], 
+     col = "red", xlim = c(0,2), ylim = c(0,2), 
+     main = "Fitted Model", xlab = "S_1", ylab = "T_1")
+points(data_temp$Pfs[cens], data_temp$Surv[cens])
+plot(data_control$Pfs[(data_control$SurvInd == 1)], 
+     data_control$Surv[(data_control$SurvInd == 1)], 
+     col = "red", xlim = c(0,2), ylim = c(0,2), 
+     main = "Observed Data", xlab = "S_1", ylab = "T_1")
+points(data_control$Pfs[!(data_control$SurvInd == 1)], data_control$Surv[!(data_control$SurvInd == 1)])
+```
+
+
+# Sensitivity Analysis
+
+The sensitivity analysis consists of sampling positive definite matrices. Given such a matrix, the measures of surrogacy can be derived. In this case, only $\rho_{\Delta}$ is considered as a measure of surrogacy because it easily follows from the normal copula parameters. $\rho_{\Delta}$ is defined as the Pearson correlation between the individual causal effects on the normal transformed variables of the surrogate and true endpoint, respectively: $\rho_{\Delta} = cor(q_{S_1} - q_{S_0}, q_{T_1} - q_{T_0})$ where $q_{S_0} = \Phi^{-1}(F_{S_0}(S_0)) \sim N(0, 1)$ etc. This measures directly follows from the correlation parameters of the Gaussian copula:
+$$\rho_{\Delta} = \frac{\rho_{S_0, T_0} + \rho_{S_1, T_1} - \rho_{S_0, T_1} - \rho_{S_1, T_0}}{2 \sqrt{(1 - \rho_{T_0, T_1})(1 - \rho_{S_0, S_1})}}$$
+The interpretation of the Pearson correlation between individual causal effects on the normal transformed variables is however not clear. Nonetheless, this measures closely corresponds to the information theoretic measures, which has a clear interpretation. The advantage of the former is that it directly follows from the fitted model, whereas the information theoretic measures requires numerical integration.
+
+
+```{r}
+grid = seq(-1, 1, 0.2)
+Pos.Def.Matrices(T0S0 = rho13, T1S1 = rho24,
+                 T0T1 = grid, S0S1 = grid, T1S0 = grid, T0S1 = grid)
+# Generated.Matrices = readRDS(file = "many_matrices.RData")
+posdef_gen_matrices = Generated.Matrices[Generated.Matrices$Pos.Def.Status == 1,]
+# saveRDS(object = Generated.Matrices, file = "many_matrices.RData")
+rho_delta = numeric()
+for(i in 1:nrow(posdef_gen_matrices)){
+  num = posdef_gen_matrices[i, "T0S0"] + posdef_gen_matrices[i, "T1S1"] - posdef_gen_matrices[i, "T1S0"] - posdef_gen_matrices[i, "T0S1"]
+  denom = 2*sqrt((1 - posdef_gen_matrices[i, "T0T1"])*
+                   (1 - posdef_gen_matrices[i, "S0S1"]))
+  rho_delta = c(rho_delta, num/denom)
+}
+hist(rho_delta, main = "Sensitivity Analysis for rho_delta", xlab = "rho_delta", xlim = c(0, 1))
+```
+
+The values for $\rho_{\Delta}$ are mostly between 0.8 and 1. This is indicate of a strong association in most realities compatible with the observed data.
+
+
+```{r, eval=FALSE}
+posdef_Sigma_list = as.list(1:nrow(posdef_gen_matrices))
+for(i in 1:nrow(posdef_gen_matrices)){
+  rho12 = posdef_gen_matrices[i, "S0S1"]
+  rho13 = posdef_gen_matrices[i, "T0S0"]
+  rho14 = posdef_gen_matrices[i, "T1S0"]
+  rho23 = posdef_gen_matrices[i, "T0S1"]
+  rho24 = posdef_gen_matrices[i, "T1S1"]
+  rho34 = posdef_gen_matrices[i, "T0T1"]
+  Sigma_temp = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+  posdef_Sigma_list[[i]] = Sigma_temp
+}
+library(parallel)
+cl = makeCluster(detectCores())
+clusterEvalQ(cl, library(mvtnorm))
+clusterEvalQ(cl, library(purrr))
+clusterEvalQ(cl, library(flexsurv))
+clusterEvalQ(cl, source("information_theoretic_functions_new.R"))
+I_vec = unlist(parLapply(cl = cl, fun = r_h, X = posdef_Sigma_list, 
+                         n = 1000, N = 2000,
+                         gammas0 = fit_s0$coefficients, gammas1 = fit_s1$coefficients,
+                         gammat0 = fit_t0$coefficients, gammat1 = fit_t1$coefficients,
+                         knots0 = fit_s0$knots, knots1 = fit_s1$knots, 
+                         knott0 = fit_t0$knots, knott1 = fit_t1$knots))
+stopCluster(cl)
+saveRDS(object = I_vec, file = "I_vec.RData")
+```
+
+The information theoretic measure is the informational coefficient of correlation (ICC) between the individual causal effects on the surrogate and true endpoint, respectively: $R_h = 1 - \exp(-2 \cdot I(\Delta S, \Delta T))$. The mutual information requires solving the following integral:
+$$I(\Delta S, \Delta T) = \int f(\Delta S, \Delta T) \log \left(  \frac{f(\Delta S, \Delta T)}{f(\Delta S) \cdot f(\Delta T)} \right) d\Delta S d\Delta T$$
+which is computed numerically by Monte Carlo integration.
+
+
+```{r}
+I_vec = readRDS(file = "I_vec.RData")
+hist(1 - exp(-2*I_vec), main = "Sensitivity Analysis for R_h",
+     xlab = "R_h", xlim = c(0, 1))
+plot(rho_delta, 1 - exp(-2*I_vec), main = "rho_delta versus R_h",
+     xlim = c(0.5, 1), ylim = c(0.5, 1), xlab = "rho_delta", ylab = "R_h")
+abline(a = 0, b = 1, col = "gray")
+```
+The qualitative conclusions for the strength of surrogacy based in the histogram of $R_h$ is the same as for $\rho_\Delta$. In the scatterplot, the two different measures of surrogacy are plotted against each other. The $R_h$ tends to be larger, but there is a relatively close correspondence between both measures.
+
+
+
+The histogram clearly indicates that across almost all realities compatible with the data, the ICA is very large (for both definitions of ICA). This indicates that PFS is a good surrogate for OS for the types of treatments and types of patients included in the data set. The histogram is based on 2085 positive definite matrices.
+
+
+# Use of interval Censoring
+
+The same analysis is repeated, but now treating the right-censored observations as interval-censored data. Specifically, it is assumed that all patients progress before 15 years, and die before 20 years. These 2 values should however themselves be part of a sensitivity analysis. Moreover, input from literature might be helpful to determine whether such an assumption is plausible. One particular concern is that some patients might be cured. Progression would never occur in these patients, and death possibly only after a very long period.
+
+The \texttt{ovarian} data is from a publication in 1991. From a review around that period, the 10-year survival is around 30\% (Ovarian Cancer; Hugh R.K., Barber, M.D.; 1986). However, the survival for more advanced stages is markedly worse. Another important consideration is that ovarian cancer patients are mostly older patients. The incidence is highest in the 75-79 age group and 28\% of the new cases are older than 75 (https://www.cancerresearchuk.org/health-professional/cancer-statistics/statistics-by-cancer-type/ovarian-cancer/incidence#heading-One). If the patients in the Ovarian data set are a sample from the general population, then restricting survival to 20 years would not be too much off. Possibly, the patients from these data are younger and in a certain stage. 
+
+```{r}
+#put data in correct format
+data = Ovarian %>% select(Pfs, Surv, Treat, PfsInd, SurvInd)
+data = data %>% filter(Pfs <= Surv)
+max_death = 20
+max_pfs = 15
+data$Pfs2 = 0
+data$Surv2 = 0
+data$Pfs_cens = 0
+data$Surv_cens = 0
+for(i in 1:nrow(data)){
+  if(data$PfsInd[i] == 1 & data$SurvInd[i] == 1){
+    data$Pfs2[i] = data$Pfs[i]
+    data$Surv2[i] = data$Surv[i]
+    data$Pfs_cens[i] = 1
+    data$Surv_cens[i] = 1
+  }
+  else if(data$PfsInd[i] == 1 & data$SurvInd[i] == 0){
+    data$Pfs2[i] = data$Pfs[i]
+    data$Surv2[i] = max_death
+    data$Pfs_cens[i] = 1
+    data$Surv_cens[i] = 3
+  }
+  else if(data$PfsInd[i] == 0 & data$SurvInd[i] == 1){
+    #this cannot happen, PFS is <= OS
+    print("death without PFS")
+  }
+  else{
+    data$Pfs2[i] = max_pfs
+    data$Surv2[i] = max_death
+    data$Pfs_cens[i] = 3
+    data$Surv_cens[i] = 3
+  }
+}
+```
+
+The interval censored data is now fitted with 3 knots instead of 2. This gives generally a better fit in terms of the AIC. 
+
+```{r}
+new_data = data
+par(mfrow = c(2,2))
+fit_s0 = flexsurvspline(formula = Surv(time = Pfs, time2 = Pfs2, 
+                                       type = "interval2")~1, 
+                        data = data,
+                        subset = data$Treat == 0, k = 3, scale = "hazard")
+new_data[new_data$Treat == 0, 1] = 1 - predict(fit_s0, type = "survival",
+                                               newdata = data[1,], 
+                                               times = data[data$Treat == 0, 1])$.pred[[1]][,2]
+fit_s1 = flexsurvspline(formula = Surv(time = Pfs, time2 = Pfs2,
+                                       type = "interval2")~1, data = data, 
+                         subset = data$Treat == 1, k = 3, scale = "hazard")
+new_data[new_data$Treat == 1, 1] = 1 - predict(fit_s1, type = "survival",
+                                               newdata = data[4,], 
+                                               times = data[data$Treat == 1, 1])$.pred[[1]][,2]
+fit_t0 = flexsurvspline(formula = Surv(time = Surv, time2 = Surv2,
+                                       type = "interval2")~1, data = data, 
+                         subset = data$Treat == 0, k = 3, scale = "hazard")
+new_data[new_data$Treat == 0, 2] = 1 - predict(fit_t0, type = "survival",
+                                               newdata = data[1,], 
+                                               times = data[data$Treat == 0, 2])$.pred[[1]][,2]
+fit_t1 = flexsurvspline(formula = Surv(time = Surv, time2 = Surv2,
+                                       type = "interval2")~1, data = data, 
+                         subset = data$Treat == 1, k = 3, scale = "hazard")
+new_data[new_data$Treat == 1, 2] = 1 - predict(fit_t1, type = "survival",
+                                               newdata = data[4,], 
+                                               times = data[data$Treat == 1, 2])$.pred[[1]][,2]
+```
+
+
+These plots show how the survival function is modeled beyond the observable time period. With the data recoded into interval censored data, the long term survival probabilities are reduced by a lot as compared to the original analysis. Note however, that the correspondence to the KM-estimate is slightly off as compared to the original analysis.
+ 
+
+```{r}
+par(mfrow = c(2,2))
+times = seq(0.1, 20, 0.1)
+km_s0 = survfit(Surv(time = Pfs, event = PfsInd)~1,
+                data = data, subset = data$Treat == 0)
+plot(times, predict(fit_s0, newdata = data[1,], type = "survival", 
+                    times = times)$.pred[[1]]$.pred,
+     type = "l", col = "red", main = "S_0", xlab = "Time", ylab = "S(t)")
+lines(km_s0)
+abline(a = 0, b = 0, col = "gray")
+
+km_s1 = survfit(Surv(time = Pfs, event = PfsInd)~1,
+                data = data, subset = data$Treat == 1)
+plot(times, predict(fit_s1, newdata = data[1,], type = "survival", 
+                    times = times)$.pred[[1]]$.pred,
+     type = "l", col = "red", main = "S_1", xlab = "Time", ylab = "S(t)")
+lines(km_s1)
+abline(a = 0, b = 0, col = "gray")
+
+km_t0 = survfit(Surv(time = Surv, event = SurvInd)~1,
+                data = data, subset = data$Treat == 0)
+plot(times, predict(fit_t0, newdata = data[1,], type = "survival", 
+                    times = times)$.pred[[1]]$.pred,
+     type = "l", col = "red", main = "T_0", xlab = "Time", ylab = "S(t)")
+lines(km_t0)
+abline(a = 0, b = 0, col = "gray")
+
+km_t1 = survfit(Surv(time = Surv, event = SurvInd)~1,
+                data = data, subset = data$Treat == 1)
+plot(times, predict(fit_t1, newdata = data[1,], type = "survival", 
+                    times = times)$.pred[[1]]$.pred,
+     type = "l", col = "red", main = "T_1", xlab = "Time", ylab = "S(t)")
+lines(km_t1)
+abline(a = 0, b = 0, col = "gray")
+```
+
+```{r}
+cop_fit_ctrl = fit_copula(data = new_data[new_data$Treat == 0,], inits = 2.5)
+cop_fit_trt = fit_copula(data = new_data[new_data$Treat == 1,], inits = 2.5)
+rho13 = (exp(cop_fit_ctrl$par[1]) - 1)/(exp(cop_fit_ctrl$par[1]) + 1)
+rho24 = (exp(cop_fit_trt$par[1]) - 1)/(exp(cop_fit_trt$par[1]) + 1)
+```
+
+The observable correlations are `r rho13` for the control group, and `r rho24` for the treated group. This is slightly smaller as when the data is treated as right-censored data. 
+
+## Goodness of fit
+
+The goodness of fit is checked by sampling from the fitted model as was done before.
+
+```{r}
+#estimate survival function for censoring
+km_censor = flexsurvspline(Surv(pmax(Pfs, Surv), 1 - pmin(PfsInd, SurvInd))~1, 
+                           data = data, k = 3)
+#plot(km_censor)
+#sample from KM-curve
+U = runif(n = nrow(data))
+C = qsurvspline(p = U, gamma = km_censor$coefficients, knots = km_censor$knots)
+
+#sample from model for control
+data_temp = data[data$Treat == 0,]
+data_control = data_temp
+n_temp = nrow(data_temp)
+gauss_copula = copula::ellipCopula(family = "normal", param = rho13, dim = 2, dispstr = "un")
+X = copula::rCopula(n_temp, gauss_copula)
+data_temp$Pfs = pmin(qsurvspline(p = X[,1], gamma = fit_s0$coefficients, knots = fit_s0$knots), 
+                        C[1:n_temp])
+data_temp$Surv = pmin(qsurvspline(p = X[,2], gamma = fit_t0$coefficients, knots = fit_t0$knots),
+                         C[1:n_temp])
+cens = pmax(data_temp$Pfs, data_temp$Surv) == C[1:n_temp]
+#plot sample and true data
+par(mfrow = c(1,2))
+plot(data_temp$Pfs[!cens], data_temp$Surv[!cens], 
+     col = "red", xlim = c(0,2), ylim = c(0,2), 
+     main = "Fitted Model", xlab = "S_0", ylab = "T_0")
+points(data_temp$Pfs[cens], data_temp$Surv[cens])
+plot(data_control$Pfs[(data_control$SurvInd == 1)], 
+     data_control$Surv[(data_control$SurvInd == 1)], 
+     col = "red", xlim = c(0,2), ylim = c(0,2), 
+     main = "Observed Data", xlab = "S_0", ylab = "T_0")
+points(data_control$Pfs[!(data_control$SurvInd == 1)], data_control$Surv[!(data_control$SurvInd == 1)])
+
+#sample from model for control
+data_temp = data[data$Treat == 1,]
+data_control = data_temp
+n_temp = nrow(data_temp)
+gauss_copula = copula::ellipCopula(family = "normal", param = rho24, dim = 2, dispstr = "un")
+X = copula::rCopula(n_temp, gauss_copula)
+data_temp$Pfs = pmin(qsurvspline(p = X[,1], gamma = fit_s0$coefficients, knots = fit_s0$knots), 
+                        C[1:n_temp])
+data_temp$Surv = pmin(qsurvspline(p = X[,2], gamma = fit_t0$coefficients, knots = fit_t0$knots),
+                         C[1:n_temp])
+cens = pmax(data_temp$Pfs, data_temp$Surv) == C[1:n_temp]
+#plot sample and true data
+par(mfrow = c(1,2))
+plot(data_temp$Pfs[!cens], data_temp$Surv[!cens], 
+     col = "red", xlim = c(0,2), ylim = c(0,2), 
+     main = "Fitted Model", xlab = "S_1", ylab = "T_1")
+points(data_temp$Pfs[cens], data_temp$Surv[cens])
+plot(data_control$Pfs[(data_control$SurvInd == 1)], 
+     data_control$Surv[(data_control$SurvInd == 1)], 
+     col = "red", xlim = c(0,2), ylim = c(0,2), 
+     main = "Observed Data", xlab = "S_1", ylab = "T_1")
+points(data_control$Pfs[!(data_control$SurvInd == 1)], data_control$Surv[!(data_control$SurvInd == 1)])
+```
+
+The same conclusions holds as when the data are treated as right-censored data.
+
+# Sensitivity Analysis
+
+The results of the sensitivity analysis of the original right-censored data, and artificially interval-censored data are compared. Because the observable correlations are slightly smaller for the second case, there are more positive definite matrices sampled.
+
+There is a limited influence of the interval censoring on the distribution of $\rho_{\Delta}$.
+
+```{r}
+grid = seq(-1, 1, 0.2)
+Pos.Def.Matrices(T0S0 = rho13, T1S1 = rho24,
+                 T0T1 = grid, S0S1 = grid, T1S0 = grid, T0S1 = grid)
+# Generated.Matrices = readRDS(file = "many_matrices.RData")
+posdef_gen_matrices = Generated.Matrices[Generated.Matrices$Pos.Def.Status == 1,]
+# saveRDS(object = Generated.Matrices, file = "many_matrices.RData")
+rho_delta_int = numeric()
+for(i in 1:nrow(posdef_gen_matrices)){
+  num = posdef_gen_matrices[i, "T0S0"] + posdef_gen_matrices[i, "T1S1"] - posdef_gen_matrices[i, "T1S0"] - posdef_gen_matrices[i, "T0S1"]
+  denom = 2*sqrt((1 - posdef_gen_matrices[i, "T0T1"])*
+                   (1 - posdef_gen_matrices[i, "S0S1"]))
+  rho_delta_int = c(rho_delta_int, num/denom)
+}
+par(mfrow = c(1, 2))
+hist(rho_delta_int, main = "Interval Censoring", xlab = "rho_delta", xlim = c(0,1), 
+     breaks = seq(0, 1, 0.05))
+hist(rho_delta, main = "Right Censoring", xlab = "rho_delta", xlim = c(0,1), 
+     breaks = seq(0, 1, 0.05))
+
+```
+
+
+```{r, eval=FALSE}
+posdef_Sigma_list = as.list(1:nrow(posdef_gen_matrices))
+for(i in 1:nrow(posdef_gen_matrices)){
+  rho12 = posdef_gen_matrices[i, "S0S1"]
+  rho13 = posdef_gen_matrices[i, "T0S0"]
+  rho14 = posdef_gen_matrices[i, "T1S0"]
+  rho23 = posdef_gen_matrices[i, "T0S1"]
+  rho24 = posdef_gen_matrices[i, "T1S1"]
+  rho34 = posdef_gen_matrices[i, "T0T1"]
+  Sigma_temp = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+  posdef_Sigma_list[[i]] = Sigma_temp
+}
+library(parallel)
+cl = makeCluster(detectCores())
+clusterEvalQ(cl, library(mvtnorm))
+clusterEvalQ(cl, library(purrr))
+clusterEvalQ(cl, library(flexsurv))
+clusterEvalQ(cl, source("information_theoretic_functions_new.R"))
+I_vec_int = unlist(parLapply(cl = cl, fun = r_h, X = posdef_Sigma_list, 
+                         n = 1000, N = 2000,
+                         gammas0 = fit_s0$coefficients, gammas1 = fit_s1$coefficients,
+                         gammat0 = fit_t0$coefficients, gammat1 = fit_t1$coefficients,
+                         knots0 = fit_s0$knots, knots1 = fit_s1$knots, 
+                         knott0 = fit_t0$knots, knott1 = fit_t1$knots
+                         ))
+stopCluster(cl)
+saveRDS(object = I_vec_int, file = "I_vec_int.RData")
+```
+
+There is again a limited influence of the interval censoring on the distribution of $R_h$; of the same magnitude as for $\rho_\Delta$. The same holds for the relation between $R_h$ and $\rho_\Delta$ in both situations.
+
+```{r}
+I_vec_int = readRDS(file = "I_vec_int.RData")
+par(mfrow = c(1, 2))
+hist(1 - exp(-2*I_vec_int), main = "Interval Censoring",
+     xlab = "R_h", xlim = c(0, 1), breaks = seq(0, 1, 0.05))
+hist(1 - exp(-2*I_vec), main = "Right Censoring",
+     xlab = "R_h", xlim = c(0, 1), breaks = seq(0, 1, 0.05))
+plot(rho_delta_int, 1 - exp(-2*I_vec_int), main = "Interval Censoring", 
+     ylim = c(0.4, 1), xlim = c(0.4, 1), xlab = "rho_delta", ylab = "R_h")
+abline(a = 0, b = 1, col = "gray")
+plot(rho_delta, 1 - exp(-2*I_vec), main = "Right Censoring", 
+     ylim = c(0.4, 1), xlim = c(0.4, 1), xlab = "rho_delta", ylab = "R_h")
+abline(a = 0, b = 1, col = "gray")
+```
+
+

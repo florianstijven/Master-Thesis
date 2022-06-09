@@ -1,0 +1,823 @@
+---
+title: "Ovarian Extensions"
+author: "Florian Stijven"
+date: "11-4-2022"
+output: pdf_document
+---
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE)
+source(file = "density_functions.R")
+source(file = "copula_SCR_fitting.R")
+source(file = "information_theoretic_functions_new.R")
+library(purrr)
+library(flexsurv)
+library(Surrogate)
+library(tidyverse)
+library(survival)
+library(mvtnorm)
+library(copula)
+library(rvinecopulib)
+library(VineCopula)
+library(kdecopula)
+data("Ovarian")
+```
+
+```{r}
+#put data in correct format
+data = read.csv("ovarian.csv")
+data = data[,-1]
+data$Pfs = data$Pfs*12
+data$Surv = data$Surv*12
+```
+
+# Fit Copula Models
+
+Two types of models are considered. The first three are copula based models that impose time orderings. The last three are copula based models that do not impose time orderings. The following copulas are considered: Normal, Clayton and Frank.
+
+```{r, results='hide'}
+#number of knots
+nknots = 2
+#CONTROL GROUP
+#marginal fit as starting values
+fit_s0 = flexsurvspline(formula = Surv(Pfs, PfsInd)~1, data = data, 
+                         subset = data$Treat == 0, k = nknots, scale = "hazard")
+fit_t0 = flexsurvspline(formula = Surv(Surv, SurvInd)~1, data = data, 
+                         subset = data$Treat == 0, k = nknots, scale = "hazard")
+maxit = 1000
+inits = c(fit_s0$coefficients, fit_t0$coefficients, 3)
+fit_normal_0 = optim(par = inits, fn = normal_loglik_florian, method = "BFGS",
+      X = data$Pfs[data$Treat == 0], Y = data$Surv[data$Treat == 0], 
+      d1 = data$PfsInd[data$Treat == 0], d2 = data$SurvInd[data$Treat == 0], k = nknots,
+      knotsx = fit_s0$knots, knotsy = fit_t0$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s0$coefficients, fit_t0$coefficients, 4)
+fit_clayton_0 = optim(par = inits, fn = clayton_loglik, method = "BFGS",
+      X = data$Pfs[data$Treat == 0], Y = data$Surv[data$Treat == 0], 
+      d1 = data$PfsInd[data$Treat == 0], d2 = data$SurvInd[data$Treat == 0], k = nknots,
+      knotsx = fit_s0$knots, knotsy = fit_t0$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s0$coefficients, fit_t0$coefficients, 10)
+fit_frank_0 = optim(par = inits, fn = frank_loglik, method = "BFGS",
+      X = data$Pfs[data$Treat == 0], Y = data$Surv[data$Treat == 0], 
+      d1 = data$PfsInd[data$Treat == 0], d2 = data$SurvInd[data$Treat == 0], k = nknots,
+      knotsx = fit_s0$knots, knotsy = fit_t0$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s0$coefficients, fit_t0$coefficients, 8)
+fit_gumbel_0 = optim(par = inits, fn = gumbel_loglik, method = "BFGS",
+      X = data$Pfs[data$Treat == 0], Y = data$Surv[data$Treat == 0], 
+      d1 = data$PfsInd[data$Treat == 0], d2 = data$SurvInd[data$Treat == 0], k = nknots,
+      knotsx = fit_s0$knots, knotsy = fit_t0$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+#TREATED GROUP
+#marginal fit as starting values
+fit_s1 = flexsurvspline(formula = Surv(Pfs, PfsInd)~1, data = data, 
+                         subset = data$Treat == 1, k = nknots, scale = "hazard")
+fit_t1 = flexsurvspline(formula = Surv(Surv, SurvInd)~1, data = data, 
+                         subset = data$Treat == 1, k = nknots, scale = "hazard")
+inits = c(fit_s1$coefficients, fit_t1$coefficients, 3.23)
+maxit = 1000
+fit_normal_1 = optim(par = inits, fn = normal_loglik_florian, method = "BFGS",
+      X = data$Pfs[data$Treat == 1], Y = data$Surv[data$Treat == 1], 
+      d1 = data$PfsInd[data$Treat == 1], d2 = data$SurvInd[data$Treat == 1], k = nknots,
+      knotsx = fit_s1$knots, knotsy = fit_t1$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s1$coefficients, fit_t1$coefficients, 3)
+fit_clayton_1 = optim(par = inits, fn = clayton_loglik, method = "BFGS",
+      X = data$Pfs[data$Treat == 1], Y = data$Surv[data$Treat == 1], 
+      d1 = data$PfsInd[data$Treat == 1], d2 = data$SurvInd[data$Treat == 1], k = nknots,
+      knotsx = fit_s1$knots, knotsy = fit_t1$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s1$coefficients, fit_t1$coefficients, 7)
+fit_frank_1 = optim(par = inits, fn = frank_loglik, method = "BFGS",
+      X = data$Pfs[data$Treat == 1], Y = data$Surv[data$Treat == 1], 
+      d1 = data$PfsInd[data$Treat == 1], d2 = data$SurvInd[data$Treat == 1], k = nknots,
+      knotsx = fit_s1$knots, knotsy = fit_t1$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s1$coefficients, fit_t1$coefficients, 5)
+fit_gumbel_1 = optim(par = inits, fn = gumbel_loglik, method = "BFGS",
+      X = data$Pfs[data$Treat == 1], Y = data$Surv[data$Treat == 1], 
+      d1 = data$PfsInd[data$Treat == 1], d2 = data$SurvInd[data$Treat == 1], k = nknots,
+      knotsx = fit_s1$knots, knotsy = fit_t1$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+```
+
+```{r}
+model_comparison = data.frame(model = character(0),
+                              loglik = numeric(0),
+                              copula_par0 = numeric(0),
+                              copula_par1 = numeric(0),
+                              kendall0 = numeric(0),
+                              kendall1 = numeric(0),
+                              spearman0 = numeric(0),
+                              spearman1 = numeric(0))
+#normal model
+loglik = fit_normal_0$value + fit_normal_1$value
+copula_par0 = (exp(fit_normal_0$par[9]) - 1)/(exp(fit_normal_0$par[9]) + 1)
+copula_par1 = (exp(fit_normal_1$par[9]) - 1)/(exp(fit_normal_1$par[9]) + 1)
+normal_copula = normalCopula(param = copula_par0, dim = 2, dispstr = "un")
+kendall0 = tau(copula = normal_copula)
+rho0 = rho(copula = normal_copula)
+normal_copula = normalCopula(param = copula_par1, dim = 2, dispstr = "un")
+kendall1 = tau(copula = normal_copula)
+rho1 = rho(copula = normal_copula)
+model_comparison = bind_rows(model_comparison,
+                             data.frame(model = "normal (ord)",
+                                        loglik = loglik,
+                                        copula_par0 = copula_par0,
+                                        copula_par1 = copula_par1,
+                                        kendall0 = kendall0,
+                                        kendall1 = kendall1,
+                                        spearman0 = rho0,
+                                        spearman1 = rho1))
+#clayton copula
+loglik = fit_clayton_0$value + fit_clayton_1$value
+copula_par0 = fit_clayton_0$par[9]
+copula_par1 = fit_clayton_1$par[9]
+clayton_copula = claytonCopula(param = copula_par0, dim = 2)
+kendall0 = tau(copula = clayton_copula)
+rho0 = rho(copula = clayton_copula)
+clayton_copula = claytonCopula(param = copula_par1, dim = 2)
+kendall1 = tau(copula = clayton_copula)
+rho1 = rho(copula = clayton_copula)
+model_comparison = bind_rows(model_comparison,
+                             data.frame(model = "Clayton (ord)",
+                                        loglik = loglik,
+                                        copula_par0 = copula_par0,
+                                        copula_par1 = copula_par1,
+                                        kendall0 = kendall0,
+                                        kendall1 = kendall1,
+                                        spearman0 = rho0,
+                                        spearman1 = rho1))
+
+#Frank Copula
+loglik = fit_frank_0$value + fit_frank_1$value
+copula_par0 = fit_frank_0$par[9]
+copula_par1 = fit_frank_1$par[9]
+frank_copula = frankCopula(param = copula_par0, dim = 2)
+kendall0 = tau(copula = frank_copula)
+rho0 = rho(copula = frank_copula)
+frank_copula = frankCopula(param = copula_par1, dim = 2)
+kendall1 = tau(copula = frank_copula)
+rho1 = rho(copula = frank_copula)
+model_comparison = bind_rows(model_comparison,
+                             data.frame(model = "Frank (ord)",
+                                        loglik = loglik,
+                                        copula_par0 = copula_par0,
+                                        copula_par1 = copula_par1,
+                                        kendall0 = kendall0,
+                                        kendall1 = kendall1,
+                                        spearman0 = rho0,
+                                        spearman1 = rho1))
+
+#Gumbel Copula
+loglik = fit_gumbel_0$value + fit_gumbel_1$value
+copula_par0 = fit_gumbel_0$par[9]
+copula_par1 = fit_gumbel_1$par[9]
+gumbel_copula = gumbelCopula(param = copula_par0, dim = 2)
+kendall0 = tau(copula = gumbel_copula)
+rho0 = rho(copula = gumbel_copula)
+gumbel_copula = gumbelCopula(param = copula_par1, dim = 2)
+kendall1 = tau(copula = gumbel_copula)
+rho1 = rho(copula = gumbel_copula)
+model_comparison = bind_rows(model_comparison,
+                             data.frame(model = "gumbel (ord)",
+                                        loglik = loglik,
+                                        copula_par0 = copula_par0,
+                                        copula_par1 = copula_par1,
+                                        kendall0 = kendall0,
+                                        kendall1 = kendall1,
+                                        spearman0 = rho0,
+                                        spearman1 = rho1))
+```
+
+
+```{r, results='hide'}
+data("Ovarian")
+data_pfs = Ovarian %>% select(Pfs, Surv, Treat, PfsInd, SurvInd)
+data_pfs = data_pfs %>% filter(Pfs <= Surv)
+data_pfs = data_pfs %>% mutate(Pfs = 12*Pfs, Surv = 12*Surv)
+#number of knots
+nknots = 2
+#load function for log likelihood
+source("copula_SCR_fitting.R")
+#CONTROL GROUP
+#marginal fit as starting values
+fit_s0_no = flexsurvspline(formula = Surv(Pfs, PfsInd)~1, data = data_pfs, 
+                         subset = data_pfs$Treat == 0, k = nknots, scale = "hazard")
+fit_t0_no = flexsurvspline(formula = Surv(Surv, SurvInd)~1, data = data_pfs, 
+                         subset = data_pfs$Treat == 0, k = nknots, scale = "hazard")
+inits = c(fit_s0_no$coefficients, fit_t0_no$coefficients, 3.23)
+maxit = 100
+fit_normal_0_no = optim(par = inits, fn = normal_loglik_florian, method = "BFGS",
+      X = data_pfs$Pfs[data_pfs$Treat == 0], Y = data_pfs$Surv[data_pfs$Treat == 0], 
+      d1 = data_pfs$PfsInd[data_pfs$Treat == 0], d2 = data_pfs$SurvInd[data_pfs$Treat == 0], 
+      k = nknots,
+      knotsx = fit_s0_no$knots, knotsy = fit_t0_no$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s0_no$coefficients, fit_t0_no$coefficients, 5)
+fit_clayton_0_no = optim(par = inits, fn = clayton_loglik, method = "BFGS",
+      X = data_pfs$Pfs[data_pfs$Treat == 0], Y = data_pfs$Surv[data_pfs$Treat == 0], 
+      d1 = data_pfs$PfsInd[data_pfs$Treat == 0], d2 = data_pfs$SurvInd[data_pfs$Treat == 0], 
+      k = nknots,
+      knotsx = fit_s0_no$knots, knotsy = fit_t0_no$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s0_no$coefficients, fit_t0_no$coefficients, 8)
+fit_frank_0_no = optim(par = inits, fn = frank_loglik, method = "BFGS",
+      X = data_pfs$Pfs[data_pfs$Treat == 0], Y = data_pfs$Surv[data_pfs$Treat == 0], 
+      d1 = data_pfs$PfsInd[data_pfs$Treat == 0], d2 = data_pfs$SurvInd[data_pfs$Treat == 0], 
+      k = nknots,
+      knotsx = fit_s0_no$knots, knotsy = fit_t0_no$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s0_no$coefficients, fit_t0_no$coefficients, 3.23)
+fit_gumbel_0_no = optim(par = inits, fn = gumbel_loglik, method = "BFGS",
+      X = data_pfs$Pfs[data_pfs$Treat == 0], Y = data_pfs$Surv[data_pfs$Treat == 0], 
+      d1 = data_pfs$PfsInd[data_pfs$Treat == 0], d2 = data_pfs$SurvInd[data_pfs$Treat == 0], 
+      k = nknots,
+      knotsx = fit_s0_no$knots, knotsy = fit_t0_no$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+#TREATED GROUP
+#marginal fit as starting values
+fit_s1_no = flexsurvspline(formula = Surv(Pfs, PfsInd)~1, data = data_pfs, 
+                         subset = data_pfs$Treat == 1, k = nknots, scale = "hazard")
+fit_t1_no = flexsurvspline(formula = Surv(Surv, SurvInd)~1, data = data_pfs, 
+                         subset = data_pfs$Treat == 1, k = nknots, scale = "hazard")
+inits = c(fit_s1_no$coefficients, fit_t1_no$coefficients, 3.23)
+maxit = 100
+fit_normal_1_no = optim(par = inits, fn = normal_loglik_florian, method = "BFGS",
+      X = data_pfs$Pfs[data_pfs$Treat == 1], Y = data_pfs$Surv[data_pfs$Treat == 1], 
+      d1 = data_pfs$PfsInd[data_pfs$Treat == 1], d2 = data_pfs$SurvInd[data_pfs$Treat == 1], 
+      k = nknots,
+      knotsx = fit_s1_no$knots, knotsy = fit_t1_no$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s1_no$coefficients, fit_t1_no$coefficients, 5)
+fit_clayton_1_no = optim(par = inits, fn = clayton_loglik, method = "BFGS",
+      X = data_pfs$Pfs[data_pfs$Treat == 1], Y = data_pfs$Surv[data_pfs$Treat == 1], 
+      d1 = data_pfs$PfsInd[data_pfs$Treat == 1], d2 = data_pfs$SurvInd[data_pfs$Treat == 1], 
+      k = nknots,
+      knotsx = fit_s1_no$knots, knotsy = fit_t1_no$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s1_no$coefficients, fit_t1_no$coefficients, 10)
+fit_frank_1_no = optim(par = inits, fn = frank_loglik, method = "BFGS",
+      X = data_pfs$Pfs[data_pfs$Treat == 1], Y = data_pfs$Surv[data_pfs$Treat == 1], 
+      d1 = data_pfs$PfsInd[data_pfs$Treat == 1], d2 = data_pfs$SurvInd[data_pfs$Treat == 1], 
+      k = nknots,
+      knotsx = fit_s1_no$knots, knotsy = fit_t1_no$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+inits = c(fit_s1_no$coefficients, fit_t1_no$coefficients, 5)
+fit_gumbel_1_no = optim(par = inits, fn = gumbel_loglik, method = "BFGS",
+      X = data_pfs$Pfs[data_pfs$Treat == 1], Y = data_pfs$Surv[data_pfs$Treat == 1], 
+      d1 = data_pfs$PfsInd[data_pfs$Treat == 1], d2 = data_pfs$SurvInd[data_pfs$Treat == 1], 
+      k = nknots,
+      knotsx = fit_s1_no$knots, knotsy = fit_t1_no$knots, 
+      control = list(maxit = maxit, fnscale = -1, reltol = 1e-8, 
+                     ndeps = rep(1e-5, 9)))
+```
+
+```{r}
+#normal model
+loglik = fit_normal_0_no$value + fit_normal_1_no$value
+copula_par0 = (exp(fit_normal_0_no$par[9]) - 1)/(exp(fit_normal_0_no$par[9]) + 1)
+copula_par1 = (exp(fit_normal_1_no$par[9]) - 1)/(exp(fit_normal_1_no$par[9]) + 1)
+normal_copula = normalCopula(param = copula_par0, dim = 2, dispstr = "un")
+kendall0 = tau(copula = normal_copula)
+rho0 = rho(copula = normal_copula)
+normal_copula = normalCopula(param = copula_par1, dim = 2, dispstr = "un")
+kendall1 = tau(copula = normal_copula)
+rho1 = rho(copula = normal_copula)
+model_comparison = bind_rows(model_comparison,
+                             data.frame(model = "normal",
+                                        loglik = loglik,
+                                        copula_par0 = copula_par0,
+                                        copula_par1 = copula_par1,
+                                        kendall0 = kendall0,
+                                        kendall1 = kendall1,
+                                        spearman0 = rho0,
+                                        spearman1 = rho1))
+#clayton copula
+loglik = fit_clayton_0_no$value + fit_clayton_1_no$value
+copula_par0 = fit_clayton_0_no$par[9]
+copula_par1 = fit_clayton_1_no$par[9]
+clayton_copula = claytonCopula(param = copula_par0, dim = 2)
+kendall0 = tau(copula = clayton_copula)
+rho0 = rho(copula = clayton_copula)
+clayton_copula = claytonCopula(param = copula_par1, dim = 2)
+kendall1 = tau(copula = clayton_copula)
+rho1 = rho(copula = clayton_copula)
+model_comparison = bind_rows(model_comparison,
+                             data.frame(model = "Clayton",
+                                        loglik = loglik,
+                                        copula_par0 = copula_par0,
+                                        copula_par1 = copula_par1,
+                                        kendall0 = kendall0,
+                                        kendall1 = kendall1,
+                                        spearman0 = rho0,
+                                        spearman1 = rho1))
+
+#Frank Copula
+loglik = fit_frank_0_no$value + fit_frank_1_no$value
+copula_par0 = fit_frank_0_no$par[9]
+copula_par1 = fit_frank_1_no$par[9]
+frank_copula = frankCopula(param = copula_par0, dim = 2)
+kendall0 = tau(copula = frank_copula)
+rho0 = rho(copula = frank_copula)
+frank_copula = frankCopula(param = copula_par1, dim = 2)
+kendall1 = tau(copula = frank_copula)
+rho1 = rho(copula = frank_copula)
+model_comparison = bind_rows(model_comparison,
+                             data.frame(model = "Frank",
+                                        loglik = loglik,
+                                        copula_par0 = copula_par0,
+                                        copula_par1 = copula_par1,
+                                        kendall0 = kendall0,
+                                        kendall1 = kendall1,
+                                        spearman0 = rho0,
+                                        spearman1 = rho1))
+
+#Gumbel Copula
+loglik = fit_gumbel_0_no$value + fit_gumbel_1_no$value
+copula_par0 = fit_gumbel_0_no$par[9]
+copula_par1 = fit_gumbel_1_no$par[9]
+gumbel_copula = gumbelCopula(param = copula_par0, dim = 2)
+kendall0 = tau(copula = gumbel_copula)
+rho0 = rho(copula = gumbel_copula)
+gumbel_copula = gumbelCopula(param = copula_par1, dim = 2)
+kendall1 = tau(copula = gumbel_copula)
+rho1 = rho(copula = gumbel_copula)
+model_comparison = bind_rows(model_comparison,
+                             data.frame(model = "gumbel (ord)",
+                                        loglik = loglik,
+                                        copula_par0 = copula_par0,
+                                        copula_par1 = copula_par1,
+                                        kendall0 = kendall0,
+                                        kendall1 = kendall1,
+                                        spearman0 = rho0,
+                                        spearman1 = rho1))
+```
+
+In the following table, results from the fitted models are shown. The maximized likelihood value can be compared within the first three, and last three models, but not across. This is because the data are different across these two sets. The best fitting model is nonetheless the Frank copula in both sets because the corresponding log likelihood is largest. The worst model is the normal copula in the first set, and the Clayton copula in the second. 
+
+The normal and Frank copula yield similar estimates for Kendall's tau and Spearman's rho. However, the Clayton copula results in smaller values for these measures of association. Because the Frank copula certainly fits the best, the corresponding measures of association are more trustworthy. 
+
+
+```{r}
+knitr::kable(model_comparison[1:4,], digits = 2)
+knitr::kable(model_comparison[5:8,], digits = 2)
+```
+
+Because the Frank copula provides the best fit based on the likelihood, this fitted model is examined next in more detail.
+
+## Goodness of fit
+
+The goodness of fit is checked visually for the fitted frank copula model with time ordering. The marginal goodness of fit is checked by a comparison of the KM-estimates and model based estimates for the survival functions of PFS and OS in both treatment groups. This is shown in the next Figure. Clearly, the model based estimates follow the KM-estimates very closely. 
+
+```{r, fig.cap="Marginal goodness of fit for Frank copula model with time ordering."}
+source("copula_GOF.R")
+grid = seq(0.01, 36, 0.1)
+marginal_gof_scr(fit_frank_0$par, fit_frank_1$par, fit_s0$knots, fit_s1$knots, 
+                 fit_t0$knots, fit_t1$knots,
+                 data, "frank", grid)
+```
+
+This is compared with the Frank copula model without time orderings. From the fitted models without time orderings, this is the best fitting model based on the likelihood.
+The fit is about equally good as the corresponding model with time orderings, which is certainly expected as the main difference between both models lies in the association, and not in the marginal survival functions. 
+
+```{r, fig.cap="Marginal goodness of fit for Frank copula without time orderings"}
+marginal_gof_no(fit_frank_0_no$par, fit_frank_1_no$par, fit_s0_no$knots, fit_s1_no$knots,
+                fit_t0_no$knots, fit_t1_no$knots, data_pfs, grid)
+```
+
+
+The issue with very long OS remains. This is less problematic if the measures of association further considered are based on ranks. Still, this remains an important issue. The existence of a cured fraction might further complicate the analysis. 
+
+The goodness of fit is also evaluated for the joint distribution of PFS and OS in both groups by sampling from the fitted model, and comparing this sample with the original data. However, the original data are censored which complicates a direct comparison. The distribution of censoring indicators is therefore first estimated. Next, censoring times are sampled from this distribution as to artificially censor the sample from the fitted model. In this way, the sample from the fitted model is comparable with the original data.
+
+
+
+```{r, fig.cap="Sample from fitted model versus observed values. The fitted model is the Frank copula model with time orderings."}
+source("copula_GOF.R")
+association_gof_scr(fit_frank_0$par, fit_frank_1$par, fit_s0$knots, fit_s1$knots, 
+                    fit_t0$knots, fit_t1$knots,
+                    data, "frank")
+```
+
+
+
+```{r, fig.cap="Sample from fitted model versus observed values. The fitted model is the Frank copula model without time orderings."}
+association_no(fit_frank_0_no$par, fit_frank_1_no$par, fit_s0_no$knots, fit_s1_no$knots, 
+                    fit_t0_no$knots, fit_t1_no$knots,
+                    data_pfs, "frank")
+```
+
+
+These plots indicate that the fit (at least the observable part) is good. Moreover, the fit is clearly better for the Frank copula model with time orderings than without time orderings. Explicitly taking into account the time-orderings thus results in a better fit. This does however not necessarily mean that the conclusions with respect to the strength of surrogacy are different. 
+
+## Goodness of fit for other models
+
+```{r}
+source("copula_GOF.R")
+marginal_gof_scr(fit_clayton_0$par, fit_clayton_1$par, fit_s0$knots, fit_s1$knots, 
+                 fit_t0$knots, fit_t1$knots,
+                 data, "clayton", grid)
+association_gof_scr(fit_clayton_0$par, fit_clayton_1$par, fit_s0$knots, fit_s1$knots, 
+                 fit_t0$knots, fit_t1$knots,
+                 data, "clayton")
+marginal_gof_no(fit_clayton_0_no$par, fit_clayton_1_no$par, fit_s0_no$knots, fit_s1_no$knots, 
+                 fit_t0_no$knots, fit_t1_no$knots,
+                 data_pfs, grid)
+association_no(fit_clayton_0_no$par, fit_clayton_1_no$par, fit_s0_no$knots, fit_s1_no$knots, 
+                 fit_t0_no$knots, fit_t1_no$knots,
+                 data_pfs, "clayton")
+marginal_gof_scr(fit_normal_0$par, fit_normal_1$par, fit_s0$knots, fit_s1$knots, 
+                 fit_t0$knots, fit_t1$knots,
+                 data, "gaussian", grid)
+association_gof_scr(fit_normal_0$par, fit_normal_1$par, fit_s0$knots, fit_s1$knots, 
+                 fit_t0$knots, fit_t1$knots,
+                 data, "gaussian")
+marginal_gof_no(fit_normal_0_no$par, fit_normal_1_no$par, fit_s0_no$knots, fit_s1_no$knots, 
+                 fit_t0_no$knots, fit_t1_no$knots,
+                 data_pfs, grid)
+association_no(fit_normal_0_no$par, fit_normal_1_no$par, fit_s0_no$knots, fit_s1_no$knots, 
+                 fit_t0_no$knots, fit_t1_no$knots,
+                 data_pfs, "gaussian")
+marginal_gof_scr(fit_gumbel_0$par, fit_gumbel_1$par, fit_s0$knots, fit_s1$knots, 
+                 fit_t0$knots, fit_t1$knots,
+                 data, "gumbel", grid)
+association_gof_scr(fit_gumbel_0$par, fit_gumbel_1$par, fit_s0$knots, fit_s1$knots, 
+                 fit_t0$knots, fit_t1$knots,
+                 data, "gumbel")
+marginal_gof_no(fit_gumbel_0_no$par, fit_gumbel_1_no$par, fit_s0_no$knots, fit_s1_no$knots, 
+                 fit_t0_no$knots, fit_t1_no$knots,
+                 data_pfs, grid)
+association_no(fit_gumbel_0_no$par, fit_gumbel_1_no$par, fit_s0_no$knots, fit_s1_no$knots, 
+                 fit_t0_no$knots, fit_t1_no$knots,
+                 data_pfs, "gumbel")
+```
+
+
+## Measures of Surrogacy
+
+The parameter for the Frank copula is defined on the entire real line. So sampling from a uniform distribution is not possible as can be done for the gaussian copula. This is addressed by sampling from a uniform distribution with as bounds (minus) the observed parameter. This is reasonable because we would not expect the association to be stronger between for example $S_0$ and $T_1$, than between $S_0$ and $T_0$.
+
+Note that the Frank copula can model both negative and positive associations. This is also the case for the gaussian copula, but not for the Clayton copula. This is important because some of the constituent copulas in the vine copula are not identifiable. If we were to use a copula that can only model positive association in the construction of the vine copula, then we would (implicitly) assume that all observable associations are positive. Such an assumption is unverifiable, and possibly difficult to argue for based on scientific grounds. 
+The is however an immediate solution for such copulas. Besides making the parameters of such unobservable copulas part of the sensitivity analysis, rotating the copulas by 90, 180 and 270 degrees is also part of the sensitivity analysis.
+If a copula that can only model positive association is rotated by 90 or 270 degrees, it can only model negative association. Such a sensitivity analysis would thus not anymore impose the constraint of a positive unobservable association.
+
+Two definitions for the individual causal effects are considered. The first one is based on the difference: $\Delta S = S_1 - S_0$ and $\Delta T = T_1 - T_0$. This definition has been used in the literature for the gaussian-gaussian case. For a multivariate normal distribution, this is a natural and convenient definition. For survival outcomes, the following definition is also possible: $\Delta S = \frac{S_1}{S_0}$ and $\Delta T = \frac{T_1}{T_0}$ (or the log-ratios). This is related to the specifiation of effects in a accelerated failure time model. 
+
+Two measures of surrogacy are considered based on ranks: Kendall's tau and Spearman's correlation. Computing these measures for a bivariate distribution requires integration. However, the joint distribution of $\Delta S$ and $\Delta T$ is very complicated. Nonetheless, it is easy to sample from this distribution. These measures are therefore computed by Monte Carlo integration. This is straightforward. For each sampled positive definite matrix, 10.000 samples are drawn from the corresponding model. Kendall's tau and spearman's rho are consequently estimated based on this sample.  
+
+$$\rho_{sp} = cor(R(\Delta S), R(\Delta T))$$
+$$\tau =  P((\Delta S_1 - \Delta S_2)(\Delta T_1 - \Delta T_2) > 0) - P((\Delta S_1 - \Delta S_2)(\Delta T_1 - \Delta T_2) < 0)$$
+
+
+### Frank copula model
+
+The results of the sensitivity analysis of the Frank copula model with and without time orderings are shown in the following plots.
+
+```{r, fig.cap="Sensitivity analysis for the Frank copula model with time orderings."}
+source("surrogacy_functions.R")
+breaks = seq(-0.5, 1, 0.05)
+#frank copula with time ordering
+sens_data = surrogacy_measures(cop_type = "frank",
+                               fit_0_par = fit_frank_0$par, fit_1_par = fit_frank_1$par,
+                               n_sim = 200, n_prec = 2000, 
+                               knots0 = fit_s0$knots, knots1 = fit_s1$knots, 
+                               knott0 = fit_t0$knots, knott1 = fit_t1$knots,
+                               minfo_prec = 2000, restr = TRUE)
+par(mfrow = c(2,3))
+hist(sens_data$kendall, main = "Kendall's tau", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho, main = "Spearman's rho", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$kendall_log, main = "Kendall's tau (ratio)", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho_log, main = "Spearman's rho (ratio)", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo_log), main = "ICC (ratio)", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+pairs(sens_data)
+```
+
+```{r, fig.cap="Sensitivity analysis for the Frank copula model without time orderings."}
+#frank copula without time ordering
+sens_data = surrogacy_measures(cop_type = "frank",
+                               fit_0_par = fit_frank_0_no$par, fit_1_par = fit_frank_1_no$par,
+                               n_sim = 200, n_prec = 2000, 
+                               knots0 = fit_s0_no$knots, knots1 = fit_s1_no$knots, 
+                               knott0 = fit_t0_no$knots, knott1 = fit_t1_no$knots,
+                               minfo_prec = 2000, restr = FALSE)
+par(mfrow = c(2,3))
+hist(sens_data$kendall, main = "Kendall's tau", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho, main = "Spearman's rho", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$kendall_log, main = "Kendall's tau (ratio)", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho_log, main = "Spearman's rho (ratio)", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo_log), main = "ICC (ratio)", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+pairs(sens_data)
+```
+
+### Gaussian Copula Model
+
+The sensitivity analysis is repeated for the gaussian copula model because this is the model that was originally proposed. Moreover, this is a somewhat simpler model that can be seen independent of the vine copula formulation. 
+
+```{r, fig.cap="Sensitivity analysis for the Gaussian copula model with time orderings."}
+#gaussian copula with time ordering
+#something wrong with this chunk
+sens_data = surrogacy_measures(cop_type = "gaussian",
+                               fit_0_par = fit_normal_0$par, fit_1_par = fit_normal_1$par,
+                               n_sim = 200, n_prec = 2000, 
+                               knots0 = fit_s0$knots, knots1 = fit_s1$knots, 
+                               knott0 = fit_t0$knots, knott1 = fit_t1$knots,
+                               minfo_prec = 2000, restr = TRUE)
+par(mfrow = c(2,3))
+hist(sens_data$kendall, main = "Kendall's tau", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho, main = "Spearman's rho", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$kendall_log, main = "Kendall's tau (ratio)", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho_log, main = "Spearman's rho (ratio)", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo_log), main = "ICC (ratio)", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+pairs(sens_data)
+```
+
+```{r, fig.cap="Sensitivity analysis for the Gaussian copula model without time orderings."}
+#gaussian copula without time ordering
+sens_data = surrogacy_measures(cop_type = "gaussian",
+                               fit_0_par = fit_normal_0_no$par, fit_1_par = fit_normal_1_no$par,
+                               n_sim = 200, n_prec = 2000, 
+                               knots0 = fit_s0_no$knots, knots1 = fit_s1_no$knots, 
+                               knott0 = fit_t0_no$knots, knott1 = fit_t1_no$knots,
+                               minfo_prec = 2000, restr = FALSE)
+par(mfrow = c(2,3))
+hist(sens_data$kendall, main = "Kendall's tau", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho, main = "Spearman's rho", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$kendall_log, main = "Kendall's tau (ratio)", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho_log, main = "Spearman's rho (ratio)", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo_log), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+pairs(sens_data)
+```
+
+### Clayton Copula Model
+
+
+```{r, fig.cap="Sensitivity analysis for the Gaussian copula model with time orderings."}
+#clayton copula with time ordering
+sens_data = surrogacy_measures(cop_type = "clayton",
+                               fit_0_par = fit_clayton_0$par, fit_1_par = fit_clayton_1$par,
+                               n_sim = 200, n_prec = 2000, 
+                               knots0 = fit_s0$knots, knots1 = fit_s1$knots, 
+                               knott0 = fit_t0$knots, knott1 = fit_t1$knots,
+                               minfo_prec = 2000, restr = TRUE)
+par(mfrow = c(2,3))
+hist(sens_data$kendall, main = "Kendall's tau", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho, main = "Spearman's rho", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$kendall_log, main = "Kendall's tau (ratio)", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho_log, main = "Spearman's rho (ratio)", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo_log), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+pairs(sens_data)
+```
+
+```{r, fig.cap="Sensitivity analysis for the Gaussian copula model without time orderings."}
+#clayton copula without time ordering
+sens_data = surrogacy_measures(cop_type = "clayton",
+                               fit_0_par = fit_clayton_0_no$par, fit_1_par = fit_clayton_1_no$par,
+                               n_sim = 200, n_prec = 2000, 
+                               knots0 = fit_s0_no$knots, knots1 = fit_s1_no$knots, 
+                               knott0 = fit_t0_no$knots, knott1 = fit_t1_no$knots,
+                               minfo_prec = 2000, restr = FALSE)
+par(mfrow = c(2,3))
+hist(sens_data$kendall, main = "Kendall's tau", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho, main = "Spearman's rho", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$kendall_log, main = "Kendall's tau (ratio)", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho_log, main = "Spearman's rho (ratio)", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo_log), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+pairs(sens_data)
+```
+
+### Gumbel Copula Model
+
+
+```{r, fig.cap="Sensitivity analysis for the Gumbel copula model with time orderings."}
+#clayton copula with time ordering
+sens_data = surrogacy_measures(cop_type = "gumbel",
+                               fit_0_par = fit_gumbel_0$par, fit_1_par = fit_gumbel_1$par,
+                               n_sim = 200, n_prec = 2000, 
+                               knots0 = fit_s0$knots, knots1 = fit_s1$knots, 
+                               knott0 = fit_t0$knots, knott1 = fit_t1$knots,
+                               minfo_prec = 2000, restr = TRUE)
+par(mfrow = c(2,3))
+hist(sens_data$kendall, main = "Kendall's tau", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho, main = "Spearman's rho", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$kendall_log, main = "Kendall's tau (ratio)", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho_log, main = "Spearman's rho (ratio)", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo_log), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+pairs(sens_data)
+```
+
+```{r, fig.cap="Sensitivity analysis for the Gumbel copula model without time orderings."}
+#clayton copula without time ordering
+sens_data = surrogacy_measures(cop_type = "gumbel",
+                               fit_0_par = fit_gumbel_0_no$par, fit_1_par = fit_gumbel_1_no$par,
+                               n_sim = 200, n_prec = 2000, 
+                               knots0 = fit_s0_no$knots, knots1 = fit_s1_no$knots, 
+                               knott0 = fit_t0_no$knots, knott1 = fit_t1_no$knots,
+                               minfo_prec = 2000, restr = FALSE)
+par(mfrow = c(2,3))
+hist(sens_data$kendall, main = "Kendall's tau", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho, main = "Spearman's rho", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$kendall_log, main = "Kendall's tau (ratio)", xlab = "tau", xlim = c(0, 1), 
+     breaks = breaks)
+hist(sens_data$sp_rho_log, main = "Spearman's rho (ratio)", xlab = "rho_sp", xlim = c(0, 1), 
+     breaks = breaks)
+hist(1 - exp(-2*sens_data$minfo_log), main = "ICC", xlab = "ICC", xlim = c(0, 1), 
+     breaks = breaks)
+pairs(sens_data)
+```
+
+
+## Information Theoretic (unfinished) 
+
+The density of $\Delta T$ can be computed by integration (sampling) as before. The histogram is obtained by sampling, the red line is the computed density. They correspond closely, indicating that the computed density is correct.
+
+```{r, eval=FALSE}
+#compute density for delta T
+delta_t = seq(-100, 100, 1)
+f_deltaT = delta_t
+gammat0 = fit_0$par[5:8]
+knott0 = fit_t0$knots
+gammat1 = fit_1$par[5:8]
+knott1 = fit_t1$knots
+N = 2000
+Sigma = posdef_Sigma_list[[80]]
+Sigma = Sigma[3:4, 3:4]
+SigmaT_det_root_inv = det(Sigma)**-0.5
+SigmaT_inv = solve(Sigma)
+for(i in 1:length(delta_t)){
+  if(delta_t[i] < 0){
+      Ut1 = runif(n = N)
+      T1 = qsurvspline(p = Ut1, gamma = gammat1, knots = knott1)
+      T0 = T1 - delta_t[i]
+      Ut0 = psurvspline(q = T0, gamma = gammat0, knots = knott0)
+      f_t = dsurvspline(x = T0, gamma = gammat0, knots = knott0)
+    }
+  else{
+      Ut0 = runif(n = N)
+      T0 = qsurvspline(p = Ut0, gamma = gammat0, knots = knott0)
+      T1 = T0 + delta_t[i]
+      Ut1 = psurvspline(q = T1, gamma = gammat1, knots = knott1)
+      f_t = dsurvspline(x = T1, gamma = gammat1, knots = knott1)
+    }
+  f_deltaT[i] = sum(pmap_dbl(.l = list(u0 = Ut0, u1 = Ut1, t0 = T0, t1 = T1, f_t = f_t), 
+                            .f = density_fast_t0t1_rh,
+                            Sigma_det_root_inv = SigmaT_det_root_inv, 
+                            Sigma_inv = SigmaT_inv))/N
+}
+
+q_vec = rmvnorm(n = n_prec, mean = c(0,0,0,0), sigma = posdef_Sigma_list[[80]])
+u_vec = pnorm(q = q_vec)
+s0 = qsurvspline(p = u_vec[,1], gamma = fit_0$par[1:4], knots = fit_s0$knots)
+s1 = qsurvspline(p = u_vec[,2], gamma = fit_1$par[1:4], knots = fit_s1$knots)
+t0 = qsurvspline(p = u_vec[,3], gamma = fit_0$par[5:8], knots = fit_t0$knots)
+t1 = qsurvspline(p = u_vec[,4], gamma = fit_1$par[5:8], knots = fit_t1$knots)
+pfs0 = pmin(s0, t0)
+pfs1 = pmin(s1, t1)
+deltaS = pfs1 - pfs0
+deltaT = t1 - t0
+
+hist(deltaT[abs(deltaT) < 100], breaks = -100:100, prob = TRUE)
+lines(delta_t, f_deltaT, type = "l", col = "red")
+```
+
+The density for $\Delta S$ is less straightforward because of the atomicity. Still, it can be computed in a similar way is for $\Delta T$.
+
+
+
+```{r, eval=FALSE}
+source("information_theoretic_functions_new.R")
+n_prec = 100000
+Sigma = posdef_Sigma_list[[80]]
+knots0 = fit_s0$knots
+knott0 = fit_t0$knots
+knots1 = fit_s1$knots
+knott1 = fit_t1$knots
+gammas0 = fit_0$par[1:4]
+gammat0 = fit_1$par[1:4]
+gammas1 = fit_0$par[5:8]
+gammat1 = fit_1$par[5:8]
+
+q_vec = rmvnorm(n = n_prec, mean = c(0,0,0,0), sigma = Sigma)
+u_vec = pnorm(q = q_vec)
+s0 = qsurvspline(p = u_vec[,1], gamma = gammas0, knots = knots0)
+s1 = qsurvspline(p = u_vec[,2], gamma = gammas1, knots = knots1)
+t0 = qsurvspline(p = u_vec[,3], gamma = gammat0, knots = knott0)
+t1 = qsurvspline(p = u_vec[,4], gamma = gammat1, knots = knott1)
+pfs0 = pmin(s0, t0)
+pfs1 = pmin(s1, t1)
+deltaS = pfs1 - pfs0
+deltaT = t1 - t0
+cat00 = (s0 < t0) & (s1 < t1)
+cat01 = !(s0 < t0) & (s1 < t1)
+cat10 = (s0 < t0) & !(s1 < t1)
+cat11 = !(s0 < t0) & !(s1 < t1)
+
+grid = seq(-50, 50, 1)
+dens = sapply(X = grid, FUN = density_deltaS_new, Sigma = Sigma, N = 1000,
+              gammas0 = gammas0, gammas1 = gammas1, gammat0 = gammat0, gammat1 = gammat1,
+              knots0 = knots0, knots1 = knots1, knott0 = knott0, knott1 = knott1)
+hist(deltaS[(abs(deltaS) < 50)], prob = TRUE, breaks = -50:50)
+inflate = mean((abs(deltaS) < 50))
+lines(grid, dens/inflate)
+
+```
+
+
+
+## IT other approach
+
+```{r, eval=FALSE}
+#first determine the different probabilities
+n_prec = 10000
+n = 1000
+q_vec = rmvnorm(n = n_prec, mean = c(0,0,0,0), sigma = Sigma)
+u_vec = pnorm(q = q_vec)
+s0 = qsurvspline(p = u_vec[,1], gamma = fit_0$par[1:4], knots = fit_s0$knots)
+s1 = qsurvspline(p = u_vec[,2], gamma = fit_1$par[1:4], knots = fit_s1$knots)
+t0 = qsurvspline(p = u_vec[,3], gamma = fit_0$par[5:8], knots = fit_t0$knots)
+t1 = qsurvspline(p = u_vec[,4], gamma = fit_1$par[5:8], knots = fit_t1$knots)
+pi00 = mean((s0 < t0) & (s1<t1))
+pi11 = mean((s0 >= t0) & (s1 >= t1))
+pi10 = mean((s0 < t0) & (s1 >= t1))
+pi01 = mean((s0 >= t0) & (s1 < t1))
+pi00 + pi11 + pi10 + pi01
+
+grid = seq(-10, 10, 0.5)
+for(i in 1:length(grid)){
+  cat = rmultinom(n = n, size = 1, prob = c(pi00, pi01, pi10, pi11))
+  
+}
+```
+
+
+

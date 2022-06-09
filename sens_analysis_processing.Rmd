@@ -1,0 +1,304 @@
+---
+title: "Sensitivity Analysis - Processing"
+author: "Florian Stijven"
+date: "20-5-2022"
+output: pdf_document
+---
+
+```{r}
+set.seed(1)
+library(tidyverse)
+library(GGally)
+library(latex2exp)
+```
+
+
+```{r}
+load("simulations_results_data.RData")
+#make artificial data set to plot the four plots in a square grid
+sens_data_marg_helper = data_sens_all %>%
+  group_by(restr, unid) %>%
+  slice_sample(n = 1000) %>%
+  mutate(assumptions = "No Assumptions") %>%
+  ungroup()
+sens_data_marg_helper = sens_data_marg_helper %>%
+  bind_rows(
+    data_sens_all %>% filter(tau_s0s1 > 0, tau_s0t0 > 0, tau_s0t1 > 0,
+                              tau_s1t0 > 0, tau_s1t1 > 0, tau_t0t1 > 0) %>%
+      group_by(restr, unid) %>%
+      slice_sample(n = 1000) %>%
+      mutate(assumptions = "Monotonicity") %>%
+      ungroup()
+  )
+sens_data_marg_helper = sens_data_marg_helper %>%
+  bind_rows(
+    data_sens_all %>% filter(pmin(abs(tau_s0t0), abs(tau_s1t1)) > pmax(abs(tau_s0t1), abs(tau_s1t0))) %>%
+      group_by(restr, unid) %>%
+      slice_sample(n = 1000) %>%
+      mutate(assumptions = "Weaker CA") %>%
+      ungroup()
+  )
+sens_data_marg_helper = sens_data_marg_helper %>%
+  bind_rows(
+    data_sens_all %>% filter(pmin(abs(tau_s0t0), abs(tau_s1t1)) > pmax(abs(tau_s0t1), abs(tau_s1t0)),
+                              tau_s0s1 > 0, tau_s0t0 > 0, tau_s0t1 > 0,
+                              tau_s1t0 > 0, tau_s1t1 > 0, tau_t0t1 > 0) %>%
+      group_by(restr, unid) %>%
+      slice_sample(n = 1000) %>%
+      ungroup() %>%
+      mutate(assumptions = "Monotonicity + Weaker CA")
+  )
+```
+
+
+```{r}
+dep_censoring_data
+```
+
+# No Time Orderings
+
+## Not added to text
+
+```{r}
+sens_data_marg_helper %>% filter(setting == "very strong", restr == FALSE) %>%
+  ggplot(aes(x = sp_rho)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "strong", restr == FALSE) %>%
+  ggplot(aes(x = sp_rho)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "moderate", restr == FALSE) %>%
+  ggplot(aes(x = sp_rho)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+
+sens_data_marg_helper %>% filter(setting == "very strong", restr == FALSE) %>%
+  ggplot(aes(x = kendall)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "strong", restr == FALSE) %>%
+  ggplot(aes(x = kendall)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "moderate", restr == FALSE) %>%
+  ggplot(aes(x = kendall)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+
+sens_data_marg_helper %>% filter(setting == "very strong", restr == FALSE) %>%
+  ggplot(aes(x = 1 - exp(-2*minfo))) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "strong", restr == FALSE) %>%
+  ggplot(aes(x = 1 - exp(-2*minfo))) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "moderate", restr == FALSE) %>%
+  ggplot(aes(x = 1 - exp(-2*minfo))) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+```
+
+
+
+```{r}
+n = 1000
+sens_data_marg_helper %>% group_by(unid, assumptions, setting) %>%
+  mutate(sp_rho_q = rank(sp_rho)) %>%
+  filter(setting == "strong") %>%
+  ungroup() %>%
+  pivot_wider(id_cols = c("assumptions", "setting", "sp_rho_q"), 
+              names_from = unid, values_from = sp_rho) %>%
+  ggpairs(columns = 4:7, mapping = aes(color = as.factor(assumptions)),
+          lower = list(continuous = wrap("points", alpha = 0.3, size=0.1)))
+
+
+my_fn <- function(data, mapping){
+  p <- ggplot(data = data, mapping = mapping) + 
+    geom_point(alpha = 0.2, size = 0.5) + 
+    geom_abline(aes(slope = 1, intercept = 0), color = "red")
+  p
+}
+
+for(setting_i in c("very strong", "strong", "moderate")){
+  for(option_i in unique(sens_data_marg_helper$assumptions)){
+    p = sens_data_marg_helpersens_data_marg_helper %>% group_by(unid, assumptions, setting) %>%
+    mutate(sp_rho_q = rank(sp_rho)) %>%
+    filter(setting == setting_i, assumptions == option_i) %>%
+    ungroup() %>%
+    pivot_wider(id_cols = c("assumptions", "setting", "sp_rho_q"), 
+                names_from = unid, values_from = sp_rho) %>%
+    ggpairs(columns = 4:7,
+            lower =  list(continuous = wrap(my_fn)))
+    print(p)
+  }
+}
+
+
+
+```
+
+## Added to Text
+
+```{r}
+sens_data_marg_helper %>% mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>% filter(unid == "clayton", restr == FALSE) %>%
+  group_by(assumptions, setting) %>% 
+  summarise(Range = paste0("[", round(min(1 - exp(-2*minfo)), 3), ", ",
+                           round(max(1 - exp(-2*minfo)), 3), "]"),
+                SD = sd(sp_rho),
+                perc = paste0("[", round(quantile(1 - exp(-2*minfo), 0.01), 3), ", ",
+                              round(quantile(1 - exp(-2*minfo), 0.99), 3), "]"),
+            median = median(1 - exp(-2*minfo))
+      ) %>%
+  mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>%
+  arrange(setting, assumptions) %>%
+  knitr::kable(format = "latex")
+```
+
+```{r}
+sens_data_marg_helper %>% filter(unid == "clayton", restr == FALSE) %>%
+  ggplot(aes(x = 1 - exp(-2*minfo))) +
+  geom_histogram(fill = "gray", color = "black") +
+  theme_bw() +
+  scale_x_continuous(name = TeX("$R^2_H$")) +
+  facet_grid(assumptions~setting)
+```
+
+
+## Added to Appendix
+
+```{r}
+#There will be really a lot of tables and figures. I think the best approach is to 
+# only provide the figures and tables for R^2H in the main text, all else in an appendix.
+sens_data_marg_helper %>% mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>% filter(setting == "very strong", restr == FALSE) %>%
+  group_by(assumptions, unid) %>% 
+  summarise(Range = paste0("[", round(min(1 - exp(-2*minfo)), 3), ", ",
+                           round(max(1 - exp(-2*minfo)), 3), "]"),
+                SD = sd(sp_rho),
+                perc = paste0("[", round(quantile(1 - exp(-2*minfo), 0.01), 3), ", ",
+                              round(quantile(1 - exp(-2*minfo), 0.99), 3), "]"),
+            median = median(1 - exp(-2*minfo))
+      ) %>%
+  mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>%
+  arrange(unid, assumptions) %>%
+  knitr::kable(format = "latex")
+
+sens_data_marg_helper %>% mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>% filter(setting == "strong", restr == FALSE) %>%
+  group_by(assumptions, unid) %>% 
+  summarise(Range = paste0("[", round(min(1 - exp(-2*minfo)), 3), ", ",
+                           round(max(1 - exp(-2*minfo)), 3), "]"),
+                SD = sd(sp_rho),
+                perc = paste0("[", round(quantile(1 - exp(-2*minfo), 0.01), 3), ", ",
+                              round(quantile(1 - exp(-2*minfo), 0.99), 3), "]"),
+            median = median(1 - exp(-2*minfo))
+      ) %>%
+  mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>%
+  arrange(unid, assumptions) %>%
+  knitr::kable(format = "latex")
+
+sens_data_marg_helper %>% mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>% filter(setting == "moderate", restr == FALSE) %>%
+  group_by(assumptions, unid) %>% 
+  summarise(Range = paste0("[", round(min(1 - exp(-2*minfo)), 3), ", ",
+                           round(max(1 - exp(-2*minfo)), 3), "]"),
+                SD = sd(sp_rho),
+                perc = paste0("[", round(quantile(1 - exp(-2*minfo), 0.01), 3), ", ",
+                              round(quantile(1 - exp(-2*minfo), 0.99), 3), "]"),
+            median = median(1 - exp(-2*minfo))
+      ) %>%
+  mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>%
+  arrange(unid, assumptions) %>%
+  knitr::kable(format = "latex")
+
+```
+
+
+
+
+# Time Orderings
+
+
+```{r}
+sens_data_marg_helper %>% filter(setting == "very strong", restr == TRUE) %>%
+  ggplot(aes(x = sp_rho)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "strong", restr == TRUE) %>%
+  ggplot(aes(x = sp_rho)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "moderate", restr == TRUE) %>%
+  ggplot(aes(x = sp_rho)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+
+sens_data_marg_helper %>% filter(setting == "very strong", restr == TRUE) %>%
+  ggplot(aes(x = kendall)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "strong", restr == TRUE) %>%
+  ggplot(aes(x = kendall)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "moderate", restr == TRUE) %>%
+  ggplot(aes(x = kendall)) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+
+sens_data_marg_helper %>% filter(setting == "very strong", restr == TRUE) %>%
+  ggplot(aes(x = 1 - exp(-2*minfo))) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "strong", restr == TRUE) %>%
+  ggplot(aes(x = 1 - exp(-2*minfo))) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+sens_data_marg_helper %>% filter(setting == "moderate", restr == TRUE) %>%
+  ggplot(aes(x = 1 - exp(-2*minfo))) +
+  geom_histogram() +
+  facet_grid(assumptions~unid)
+```
+
+```{r}
+sens_data_marg_helper %>% mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>% filter(setting == "very strong", restr == TRUE) %>%
+  group_by(assumptions, unid) %>% 
+  summarise(Range = paste0("[", round(min(1 - exp(-2*minfo)), 3), ", ",
+                           round(max(1 - exp(-2*minfo)), 3), "]"),
+                SD = sd(sp_rho),
+                perc = paste0("[", round(quantile(1 - exp(-2*minfo), 0.01), 3), ", ",
+                              round(quantile(1 - exp(-2*minfo), 0.99), 3), "]"),
+            median = median(1 - exp(-2*minfo))
+      ) %>%
+  mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>%
+  arrange(unid, assumptions) %>%
+  knitr::kable(format = "latex")
+
+sens_data_marg_helper %>% mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>% filter(setting == "strong", restr == TRUE) %>%
+  group_by(assumptions, unid) %>% 
+  summarise(Range = paste0("[", round(min(1 - exp(-2*minfo)), 3), ", ",
+                           round(max(1 - exp(-2*minfo)), 3), "]"),
+                SD = sd(sp_rho),
+                perc = paste0("[", round(quantile(1 - exp(-2*minfo), 0.01), 3), ", ",
+                              round(quantile(1 - exp(-2*minfo), 0.99), 3), "]"),
+            median = median(1 - exp(-2*minfo))
+      ) %>%
+  mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>%
+  arrange(unid, assumptions) %>%
+  knitr::kable(format = "latex")
+
+sens_data_marg_helper %>% mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>% filter(setting == "moderate", restr == TRUE) %>%
+  group_by(assumptions, unid) %>% 
+  summarise(Range = paste0("[", round(min(1 - exp(-2*minfo)), 3), ", ",
+                           round(max(1 - exp(-2*minfo)), 3), "]"),
+                SD = sd(sp_rho),
+                perc = paste0("[", round(quantile(1 - exp(-2*minfo), 0.01), 3), ", ",
+                              round(quantile(1 - exp(-2*minfo), 0.99), 3), "]"),
+            median = median(1 - exp(-2*minfo))
+      ) %>%
+  mutate_if(.predicate = is.numeric, .funs = ~round(x = .x, digits = 3)) %>%
+  arrange(unid, assumptions) %>%
+  knitr::kable(format = "latex")
+```
+
+
+

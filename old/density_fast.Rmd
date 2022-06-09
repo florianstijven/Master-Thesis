@@ -1,0 +1,83 @@
+---
+title: "Fast Density"
+author: "Florian Stijven"
+date: "14-3-2022"
+output: pdf_document
+---
+
+I try to come up with a faster function to compute the density of the gaussian copula model.
+
+```{r}
+density_fast = function(Sigma_det_root_inv, Sigma_inv, 
+                        s0, s1, t0, t1,
+                        lambda_s0, lambda_s1, 
+                        lambda_t0, lambda_t1,
+                        k_s0, k_s1, k_t0, k_t1){
+  qs_0 = qnorm(pweibull(q = s0, shape = k_s0, scale = lambda_s0))
+  qs_1 = qnorm(pweibull(q = s1, shape = k_s1, scale = lambda_s1))
+  qt_0 = qnorm(pweibull(q = t0, shape = k_t0, scale = lambda_t0))
+  qt_1 = qnorm(pweibull(q = t1, shape = k_t1, scale = lambda_t1))
+  z = matrix(c(qs_0, qs_1, qt_0, qt_1), nrow = 1)
+  weibull_product = k_s0*k_s1*k_t0*k_t1*
+    (lambda_s0**(-k_s0))*(lambda_s1**(-k_s1))*(lambda_t0**(-k_t0))*(lambda_t1**(-k_t1))*
+    (s0**(k_s0 - 1))*(s1**(k_s1 - 1))*(t0**(k_t0 - 1))*(t1**(k_t1 - 1))*
+    exp(-1*(((s0/lambda_s0)**k_s0) + ((s1/lambda_s1)**k_s1) + ((t0/lambda_t0)**k_t0) + ((t1/lambda_t1)**k_t1)))
+  return((Sigma_det_root_inv*
+           exp(-0.5*z%*%(Sigma_inv - diag(1, 4))%*%t(z))*
+           weibull_product)[1,1])
+}
+
+```
+
+```{r}
+#parameters
+rho12 = 0.1
+rho13 = 0.5
+rho14 = 0.1
+rho23 = 0.1
+rho24 = 0.4
+rho34 = 0.1
+Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+lambda_s0 = 4
+lambda_s1 = 7
+lambda_t0 = 12
+lambda_t1 = 14
+k_s0 = 2
+k_s1 = 3
+k_t0 = 4
+k_t1 = 6
+
+s0 = 5
+s1 = 8
+t0 = 10
+t1 = 12
+
+
+Sigma_det_root_inv = (determinant(Sigma, logarithm = FALSE)$modulus)**-0.5
+Sigma_det_root_inv = Sigma_det_root_inv[1]
+Sigma_inv = solve(Sigma)
+
+a = rep(s0, 200000)
+
+system.time(
+  for(value in a){
+    density_fast(Sigma_det_root_inv, Sigma_inv, value, s1, t0, t1,
+                   lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                   k_s0, k_s1, k_t0, k_t1)
+    }
+)
+
+system.time(
+  for(value in a){
+    density_fast2(Sigma_det_root_inv, Sigma_inv, value, s1, t0, t1,
+                   lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                   k_s0, k_s1, k_t0, k_t1)
+    }
+)
+
+```
+
+

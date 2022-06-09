@@ -1,0 +1,7 @@
+{
+    "installOptions": {
+        "installFromRepository": true,
+        "libraryPath": "D:/OneDrive - UGent/Documenten/R/win-library/4.1",
+        "installDependencies": true
+    }
+}

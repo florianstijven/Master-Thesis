@@ -1,0 +1,343 @@
+---
+title: "Sensitivity Analysis"
+author: "Florian Stijven"
+date: "6-5-2022"
+output: pdf_document
+---
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE)
+source("surrogacy_functions_new.R")
+library(flexsurv)
+library(survival)
+library(copula)
+library(rvinecopulib)
+library(VineCopula)
+library(kdecopula)
+
+n_prec = 2000
+N = 1000
+cop_type = "clayton"
+option = 1
+restr = FALSE
+
+data_sens_all = data.frame(unid = character(0), sp_rho = numeric(0), tau = numeric(0), minfo = numeric(0),
+                           restr = logical(0), setting = character(0), option = numeric(0))
+set.seed(1)
+```
+
+
+```{r}
+#function to compute metrics of surrogacy 
+surrogacy_sens = function(restr, option = 1){
+  collect_df = data.frame(unid = character(0), sp_rho = numeric(0), tau = numeric(0), minfo = numeric(0))
+  temp_f = surrogacy_measures_sens(cop_type = cop_type, fit_0_par = ctrl_par, fit_1_par = treat_par,
+                     n_sim = N, n_prec = n_prec,
+                     knots0 = knot, knots1 = knot, knott0 = knot, knott1 = knot, 
+                     minfo_prec = n_prec, restr = restr, get_unid = TRUE, cop_type2 = "clayton",
+                     option = option, ncores = 1)
+  collect_df = bind_rows(collect_df,
+                         data.frame(unid = "clayton", sp_rho = temp_f$sp_rho,
+                                    tau = temp_f$kendall, minfo = temp_f$minfo))
+  
+  temp_f = surrogacy_measures_sens(cop_type = cop_type, fit_0_par = ctrl_par, fit_1_par = treat_par,
+                     n_sim = N, n_prec = n_prec,
+                     knots0 = knot, knots1 = knot, knott0 = knot, knott1 = knot,
+                     minfo_prec = n_prec, restr = restr, get_unid = TRUE, cop_type2 = "gaussian",
+                     option = option, ncores = 1)
+  collect_df = bind_rows(collect_df,
+                         data.frame(unid = "gaussian", sp_rho = temp_f$sp_rho,
+                                    tau = temp_f$kendall, minfo = temp_f$minfo))
+  
+  temp_f = surrogacy_measures_sens(cop_type = cop_type, fit_0_par = ctrl_par, fit_1_par = treat_par,
+                     n_sim = N, n_prec = n_prec,
+                     knots0 = knot, knots1 = knot, knott0 = knot, knott1 = knot, 
+                     minfo_prec = n_prec, restr = restr, get_unid = TRUE, cop_type2 = "frank",
+                     option = option, ncores = 1)
+  collect_df = bind_rows(collect_df,
+                         data.frame(unid = "frank", sp_rho = temp_f$sp_rho,
+                                    tau = temp_f$kendall, minfo = temp_f$minfo))
+  
+  temp_f = surrogacy_measures_sens(cop_type = cop_type, fit_0_par = ctrl_par, fit_1_par = treat_par,
+                     n_sim = N, n_prec = n_prec,
+                     knots0 = knot, knots1 = knot, knott0 = knot, knott1 = knot, 
+                     minfo_prec = n_prec, restr = restr, get_unid = TRUE, cop_type2 = "gumbel",
+                     option = option, ncores = 1)
+  collect_df = bind_rows(collect_df,
+                         data.frame(unid = "gumbel", sp_rho = temp_f$sp_rho,
+                                    tau = temp_f$kendall, minfo = temp_f$minfo))
+  return(collect_df)
+  }
+```
+
+
+# Without time ordering
+
+```{r}
+# knot = 1:2
+# x = seq(0.001, 3, 0.01)
+# plot(x = x, y = dsurvspline0(x = x, gamma0 = 2, gamma1 = 2, knots = knot), type = "l")
+# lines(x = x, y = dsurvspline0(x = x, gamma0 = 1.5, gamma1 = 2, knots = knot), col = "red")
+# plot(x = x, y = dsurvspline0(x = x, gamma0 = 1, gamma1 = 2, knots = knot), type = "l")
+# lines(x = x, y = dsurvspline0(x = x, gamma0 = 0.75, gamma1 = 2, knots = knot), col = "red")
+
+```
+
+## Strong
+
+```{r}
+# n_prec = 1000
+# N = 1000
+#generate clayton copula models and compute measures of surrogacy
+#marginal weibull
+knot = c(1, 5)
+#strong observable association parameters
+theta_c12 = 6
+theta_c34 = 6
+ctrl_par = c(2, 2, 5, 2, theta_c12)
+treat_par = c(1.5, 2, 4, 2, theta_c34)
+
+a = Sys.time()
+temp = surrogacy_sens(restr = FALSE, option = 1)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "strong", option = 1))
+print(Sys.time() - a)
+
+temp = surrogacy_sens(restr = FALSE, option = 2)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "strong", option = 2))
+
+temp = surrogacy_sens(restr = FALSE, option = 3)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "strong", option = 3))
+
+temp = surrogacy_sens(restr = FALSE, option = 4)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "strong", option = 4))
+```
+
+## Moderate
+
+```{r}
+# n_prec = 1000
+# N = 1000
+#generate clayton copula models and compute measures of surrogacy
+#marginal weibull
+knot = c(1, 5)
+#strong observable association parameters
+theta_c12 = 2
+theta_c34 = 2
+ctrl_par = c(2, 2, 5, 2, theta_c12)
+treat_par = c(1.5, 2, 4, 2, theta_c34)
+
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = FALSE, option = 1)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "moderate", option = 1))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = FALSE, option = 2)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "moderate", option = 2))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = FALSE, option = 3)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "moderate", option = 3))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = FALSE, option = 4)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "moderate", option = 4))
+```
+
+## Weak
+
+```{r}
+# n_prec = 1000
+# N = 1000
+#generate clayton copula models and compute measures of surrogacy
+#marginal weibull
+knot = c(1, 5)
+#strong observable association parameters
+theta_c12 = 2/3
+theta_c34 = 2/3
+ctrl_par = c(2, 2, 5, 2, theta_c12)
+treat_par = c(1.5, 2, 4, 2, theta_c34)
+
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = FALSE, option = 1)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "weak", option = 1))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = FALSE, option = 2)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "weak", option = 2))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = FALSE, option = 3)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "weak", option = 3))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = FALSE, option = 4)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = FALSE, setting = "weak", option = 4))
+```
+
+
+# With time ordering
+
+The marginal parameters should be determined such that around 20\% of the observations are censored by death. This is a more or less realistic situation, but could be varied. 
+
+## Strong
+
+```{r}
+# n_prec = 1000
+# N = 1000
+#generate clayton copula models and compute measures of surrogacy
+#marginal weibull
+knot = c(1, 5)
+#strong observable association parameters
+theta_c12 = 11.3
+theta_c34 = 11.3
+ctrl_par = c(1.9, 2, 1.5, 2, theta_c12)
+treat_par = c(1.4, 2, 1, 2, theta_c34)
+clayton_copula = copula::claytonCopula(param = 11.3, dim = 2)
+U = rCopula(copula = clayton_copula, n = 100000)
+s0 = qsurvspline0(p = 1 - U[,1], gamma0 = 2, gamma1 = 2, knots = knot)
+t0 = qsurvspline0(p = 1 - U[,2], gamma0 = 1.5, gamma1 = 1.85, knots = knot)
+mean(t0 < s0)
+U = rCopula(copula = clayton_copula, n = 100000)
+s1 = qsurvspline0(p = 1 - U[,1], gamma0 = 1.5, gamma1 = 2, knots = knot)
+t1 = qsurvspline0(p = 1 - U[,2], gamma0 = 1, gamma1 = 1.8, knots = knot)
+mean(t1 < s1)
+```
+
+
+```{r}
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 1)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "strong", option = 1))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 2)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "strong", option = 2))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 3)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "strong", option = 3))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 4)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "strong", option = 4))
+```
+
+## Moderate
+
+```{r}
+# n_prec = 1000
+# N = 1000
+#generate clayton copula models and compute measures of surrogacy
+#marginal weibull
+knot = c(1, 5)
+#strong observable association parameters
+theta_c12 = 6
+theta_c34 = 6
+ctrl_par = c(2, 2, 1.1, 2, theta_c12)
+treat_par = c(1.5, 2, 0.6, 2, theta_c34)
+clayton_copula = copula::claytonCopula(param = 6, dim = 2)
+U = rCopula(copula = clayton_copula, n = 10000)
+s0 = qsurvspline0(p = 1 - U[,1], gamma0 = 2, gamma1 = 2, knots = knot)
+t0 = qsurvspline0(p = 1 - U[,2], gamma0 = 1.1, gamma1 = 2, knots = knot)
+mean(t0 < s0)
+U = rCopula(copula = clayton_copula, n = 10000)
+s1 = qsurvspline0(p = 1 - U[,1], gamma0 = 1.5, gamma1 = 2, knots = knot)
+t1 = qsurvspline0(p = 1 - U[,2], gamma0 = 0.6, gamma1 = 2, knots = knot)
+mean(t1 < s1)
+```
+
+
+```{r}
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 1)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "moderate", option = 1))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 2)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "moderate", option = 2))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 3)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "moderate", option = 3))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 4)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "moderate", option = 4))
+```
+
+## Weak
+
+
+
+```{r}
+# n_prec = 1000
+# N = 1000
+#generate clayton copula models and compute measures of surrogacy
+#marginal weibull
+knot = c(1, 5)
+#strong observable association parameters
+theta_c12 = 2/3
+theta_c34 = 2/3
+ctrl_par = c(2, 2, 0.7, 2, theta_c12)
+treat_par = c(1.5, 2, 0.25, 2, theta_c34)
+clayton_copula = copula::claytonCopula(param = 2/3, dim = 2)
+U = rCopula(copula = clayton_copula, n = 10000)
+s0 = qsurvspline0(p = 1 - U[,1], gamma0 = 2, gamma1 = 2, knots = knot)
+t0 = qsurvspline0(p = 1 - U[,2], gamma0 = 0.7, gamma1 = 2, knots = knot)
+mean(t0 < s0)
+U = rCopula(copula = clayton_copula, n = 10000)
+s1 = qsurvspline0(p = 1 - U[,1], gamma0 = 1.5, gamma1 = 2, knots = knot)
+t1 = qsurvspline0(p = 1 - U[,2], gamma0 = 0.25, gamma1 = 2, knots = knot)
+mean(t1 < s1)
+```
+
+
+```{r}
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 1)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "weak", option = 1))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 2)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "weak", option = 2))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 3)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "weak", option = 3))
+
+temp = surrogacy_sens(ctrl_par = ctrl_par, treat_par = treat_par, n_prec = n_prec,
+               N = N, cop_type = "clayton", restr = TRUE, option = 4)
+data_sens_all = bind_rows(data_sens_all,
+                          data.frame(temp, restr = TRUE, setting = "weak", option = 4)8
+```
+
+```{r}
+print(Sys.time() - a)
+save(data_sens_all, file = "data_sens_all.Rdata")
+```
+

@@ -1,0 +1,355 @@
+---
+title: "Sensitivity Analysis - Ovarian"
+author: "Florian Stijven"
+date: "29-3-2022"
+output: pdf_document
+---
+
+
+```{r, echo=FALSE}
+source(file = "density_functions.R")
+library(purrr)
+library(flexsurv)
+library(Surrogate)
+library(tidyverse)
+library(survival)
+library(mvtnorm)
+data("Ovarian")
+```
+
+```{r}
+#put data in correct format
+data = Ovarian %>% select(Pfs, Surv, Treat, PfsInd, SurvInd)
+data = data %>% filter(Pfs <= Surv)
+table(data$PfsInd, data$SurvInd)
+data %>% filter(Surv == Pfs & PfsInd == 1 & SurvInd == 1) %>% nrow()
+```
+
+# Introduction
+
+The \texttt{Ovarian} data set contains the progression-free survival times (PFS), and overall survival times (OS) for 1192 ovarian cancer patients. One observation is left out because the PFS is longer than OS, which is not possible. Both PFS and OS can be censored. Due to the nature of the endpoints, PFS is always smaller than or equal to OS. For 200 out of the 1191 observations, the observed times for PFS and OS are equal. With the copula based approach, this atomicity is however ignored. Moreover, the copula based approach does not impose ordering restrictions. Depending on the data, this could lead to issues.
+
+Also note that due to the nature of the endpoints, PFS and OS are by definition associated. Indeed, PFS is a composite endpoint combining time-to-progression and time-to-death, whichever comes first.
+
+Several conventional parametric models were considered for modelling the marginal survival functions: Weibull, log-logistic and generalized gamma. However, these all fail to describe the data well. This is caused by the fact that in the data, the hazard is initially very high, but later becomes very small. This is seen on the marginal survival functions were intially there is a large drop, but after some time the survival functions become almost constant at about 0.1-0.2. Therefore, a Royston-Parmar spline model is fitted using a two-stage approach.
+
+# Model Fitting
+
+## Royston-Parmar Spline Model
+
+The Royston-Parmar spline model is fitted for each potential outcome \textit{separately}, so four times. A simplification would be fit it once for PFS and once for OS, and then include a treatment effect into the model. This however entails and additional PH-assumption which is not needed anywhere in the further approach.  
+
+All Royston-Parmar spline models are fitted with two knots using the \texttt{flexsurvspline} function from the \texttt{flexsurv} package. So each survival function is modelled by 4 parameters. As can be seen in the plots below, the KM-estimate and parametric estimate of the respective survival functions are very near, indicating that this parametric model is appropriate. 
+
+```{r}
+new_data = data
+par(mfrow = c(2,2))
+fit_s0 = flexsurvspline(formula = Surv(Pfs, PfsInd)~1, data = data, 
+                         subset = data$Treat == 0, k = 2, scale = "hazard")
+plot(fit_s0, main = "S_0")
+new_data[new_data$Treat == 0, 1] = 1 - predict(fit_s0, type = "survival",
+                                               newdata = data[1,], 
+                                               times = data[data$Treat == 0, 1])$.pred[[1]][,2]
+fit_s1 = flexsurvspline(formula = Surv(Pfs, PfsInd)~1, data = data, 
+                         subset = data$Treat == 1, k = 2, scale = "hazard")
+new_data[new_data$Treat == 1, 1] = 1 - predict(fit_s1, type = "survival",
+                                               newdata = data[4,], 
+                                               times = data[data$Treat == 1, 1])$.pred[[1]][,2]
+plot(fit_s1, main = "S_1")
+fit_t0 = flexsurvspline(formula = Surv(Surv, SurvInd)~1, data = data, 
+                         subset = data$Treat == 0, k = 2, scale = "hazard")
+new_data[new_data$Treat == 0, 2] = 1 - predict(fit_t0, type = "survival",
+                                               newdata = data[1,], 
+                                               times = data[data$Treat == 0, 2])$.pred[[1]][,2]
+plot(fit_t0, main = "T_0")
+fit_t1 = flexsurvspline(formula = Surv(Surv, SurvInd)~1, data = data, 
+                         subset = data$Treat == 1, k = 2, scale = "hazard")
+new_data[new_data$Treat == 1, 2] = 1 - predict(fit_t1, type = "survival",
+                                               newdata = data[4,], 
+                                               times = data[data$Treat == 1, 2])$.pred[[1]][,2]
+plot(fit_t1, main = "T_1")
+```
+
+```{r}
+source("delete.R")
+#for surrogate endpoint
+delta_s = 0.5
+rho = 0.5
+U = runif(n = 10000)
+S0 = predict(fit_s0, type = "quantile", newdata = data[1,], p = U)$.pred[[1]]$.pred
+S1 = S0 + delta_s
+Us1 = 1 - predict(fit_s1, type = "survival", newdata = data[4,], times = S1)$.pred[[1]]$.pred
+f_s1 = (predict(fit_s1, type = "hazard", newdata = data[1,], times = S1)$.pred[[1]]$.pred)*
+    (predict(fit_s1, type = "survival", newdata = data[1,], times = S1)$.pred[[1]]$.pred)
+Sigma = matrix(c(1, rho, rho, 1), nrow = 2)
+Sigma_det_root_inv = det(Sigma)**-0.5
+Sigma_inv = solve(Sigma)
+temp = pmap_dbl(.l = list(u0 = U, u1 = Us1, s0 = S0, s1 = S1, f_s1 = f_s1), .f = density_fast_s0s1_rh,
+         Sigma_det_root_inv = Sigma_det_root_inv, Sigma_inv = Sigma_inv)
+mean(temp)
+sd(temp)/100
+
+
+# for true endpoint
+delta_t = 0.5
+rho = 0.5
+U = runif(n = 10000)
+T0 = predict(fit_t0, type = "quantile", newdata = data[1,], p = U)$.pred[[1]]$.pred
+T1 = T0 + delta_t
+f_t1 = (predict(fit_t1, type = "hazard", newdata = data[1,], times = T1)$.pred[[1]]$.pred)*
+    (predict(fit_t1, type = "survival", newdata = data[1,], times = T1)$.pred[[1]]$.pred)
+Ut1 = 1 - predict(fit_t1, type = "survival", newdata = data[4,], times = T1)$.pred[[1]]$.pred
+Sigma = matrix(c(1, rho, rho, 1), nrow = 2)
+Sigma_det_root_inv = det(Sigma)**-0.5
+Sigma_inv = solve(Sigma)
+temp = pmap_dbl(.l = list(u0 = U, u1 = Ut1, t0 = T0, t1 = T1, f_t1 = f_t1), .f = density_fast_t0t1_rh,
+         Sigma_det_root_inv = Sigma_det_root_inv, Sigma_inv = Sigma_inv)
+mean(temp)
+sd(temp)/100
+
+#for delta T and delta S together
+delta_t = 0.5
+delta_s = 0.5
+Us = runif(n = 10000)
+Ut = runif(n = 10000)
+S0 = predict(fit_s0, type = "quantile", newdata = data[1,], p = Us)$.pred[[1]]$.pred
+S1 = S0 + delta_s
+Us1 = 1 - predict(fit_s1, type = "survival", newdata = data[4,], times = S1)$.pred[[1]]$.pred
+T0 = predict(fit_t0, type = "quantile", newdata = data[1,], p = Ut)$.pred[[1]]$.pred
+T1 = T0 + delta_t
+Ut1 = 1 - predict(fit_t1, type = "survival", newdata = data[4,], times = T1)$.pred[[1]]$.pred
+
+f_t1 = (predict(fit_t1, type = "hazard", newdata = data[1,], times = T1)$.pred[[1]]$.pred)*
+    (predict(fit_t1, type = "survival", newdata = data[1,], times = T1)$.pred[[1]]$.pred)
+f_s1 = (predict(fit_s1, type = "hazard", newdata = data[1,], times = S1)$.pred[[1]]$.pred)*
+    (predict(fit_s1, type = "survival", newdata = data[1,], times = S1)$.pred[[1]]$.pred)
+
+rho12 = -0.2
+rho13 = 0.90
+rho14 = -0.15
+rho23 = -0.15
+rho24 = 0.90
+rho34 = -0.2
+Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+Sigma_det_root_inv = det(Sigma)**-0.5
+Sigma_inv = solve(Sigma)
+temp = pmap_dbl(.l = list(us0 = Us, us1 = Us1, s0 = S0, s1 = S1, ut0 = Ut, ut1 = Ut1, t0 = T0, t1 = T1,
+                          f_s1 = f_s1, f_t1 = f_t1), 
+                .f = density_fast_st_rh,
+                Sigma_det_root_inv = Sigma_det_root_inv, Sigma_inv = Sigma_inv)
+mean(temp)
+sd(temp)/sqrt(10000)
+```
+
+```{r}
+rho12 = -0.2
+rho13 = 0.885
+rho14 = -0.15
+rho23 = -0.15
+rho24 = 0.92
+rho34 = -0.2
+Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+Sigma = posdef_Sigma_list[[10]]
+Sigma_det_root_inv = det(Sigma)**-0.5
+Sigma_inv = solve(Sigma)
+SigmaS = matrix(c(1, rho13, rho13, 1), nrow = 2)
+SigmaS_det_root_inv = det(SigmaS)**-0.5
+SigmaS_inv = solve(SigmaS)
+SigmaT = matrix(c(1, rho24, rho24, 1), nrow = 2)
+SigmaT_det_root_inv = det(SigmaT)**-0.5
+SigmaT_inv = solve(SigmaT)
+#computation of R_h
+#first, sample from full joint
+q_vec = rmvnorm(n = 500, sigma = Sigma)
+u_vec = pnorm(q = q_vec)
+S_delta = predict(fit_s0, type = "quantile", newdata = data[4,], p = u_vec[,1])$.pred[[1]]$.pred -
+          predict(fit_s1, type = "quantile", newdata = data[1,], p = u_vec[,2])$.pred[[1]]$.pred
+T_delta = predict(fit_t0, type = "quantile", newdata = data[4,], p = u_vec[,3])$.pred[[1]]$.pred -
+          predict(fit_t1, type = "quantile", newdata = data[1,], p = u_vec[,4])$.pred[[1]]$.pred
+f_deltaS = 1:100
+f_deltaT = 1:100
+f_deltaST = 1:100
+for(i in 1:500){
+  delta_s = S_delta[i]
+  Us = runif(n = 1000)
+  pS_zero = 0
+  if(delta_s < 0){
+    #probability that S0 is smaller than - deltaS
+    #such S0's cannot exist, because to give such a delta S, S1 would be negative
+    pS_zero = 1 - predict(fit_s0, type = "survival", newdata = data[1,], times = -1*delta_s)$.pred
+    #so all Us should be transformed to U(pS_zero, 1)
+    Us = Us*(1 - pS_zero) + pS_zero
+  }
+  S0 = predict(fit_s0, type = "quantile", newdata = data[1,], p = Us)$.pred[[1]]$.pred
+  S1 = S0 + delta_s
+  Us1 = 1 - predict(fit_s1, type = "survival", newdata = data[4,], times = S1)$.pred[[1]]$.pred
+  f_s1 = (predict(fit_s1, type = "hazard", newdata = data[1,], times = S1)$.pred[[1]]$.pred)*
+    (predict(fit_s1, type = "survival", newdata = data[1,], times = S1)$.pred[[1]]$.pred)
+  f_deltaS[i] = (1 - pS_zero)*mean(pmap_dbl(.l = list(u0 = Us, u1 = Us1, s0 = S0, s1 = S1, f_s1 = f_s1), 
+                                      .f = density_fast_s0s1_rh,
+                                      Sigma_det_root_inv = SigmaS_det_root_inv, 
+                                      Sigma_inv = SigmaS_inv))
+  
+  delta_t = T_delta[i]
+  Ut = runif(n = 1000)
+  pT_zero = 0
+  if(delta_t < 0){
+    #probability that T0 is smaller than - deltaT
+    #such T0's cannot exist, because to give such a delta T, T1 would be negative
+    pT_zero = 1 - predict(fit_t0, type = "survival", newdata = data[1,], times = -1*delta_t)$.pred
+    #so all Ut should be transformed to U(pT_zero, 1)
+    Ut = Ut*(1 - pT_zero) + pT_zero
+  }
+  T0 = predict(fit_t0, type = "quantile", newdata = data[4,], p = Ut)$.pred[[1]]$.pred
+  T1 = T0 + delta_t
+  Ut1 = 1 - predict(fit_t1, type = "survival", newdata = data[1,], times = T1)$.pred[[1]]$.pred
+  f_t1 = (predict(fit_t1, type = "hazard", newdata = data[1,], times = T1)$.pred[[1]]$.pred)*
+    (predict(fit_t1, type = "survival", newdata = data[1,], times = T1)$.pred[[1]]$.pred)
+  f_deltaT[i] = (1 - pT_zero)*mean(pmap_dbl(.l = list(u0 = Ut, u1 = Ut1, t0 = T0, t1 = T1, f_t1 = f_t1), 
+                                      .f = density_fast_t0t1_rh,
+                                      Sigma_det_root_inv = SigmaT_det_root_inv, 
+                                      Sigma_inv = SigmaT_inv))
+  pST_zero = (1 - pS_zero)*(1 - pT_zero)
+  if(pS_zero > 0 & pT_zero > 0){
+    #if both are less than 1, we need to joint probability which is NOT just the product of both
+    qs = qnorm(pS_zero)
+    qt = qnorm(pT_zero)
+    Sigma_rho13 = matrix(c(1, rho13, rho13, 1), nrow = 2)
+    pST_zero = pmvnorm(lower = c(qs, qt), sigma = Sigma_rho13)[1]
+  }
+
+  f_deltaST[i] = pST_zero*mean(pmap_dbl(.l = list(us0 = Us, us1 = Us1, s0 = S0, s1 = S1, 
+                                                  ut0 = Ut, ut1 = Ut1, t0 = T0, t1 = T1,
+                                                  f_s1 = f_s1, f_t1 = f_t1), 
+                                        .f = density_fast_st_rh,
+                                        Sigma_det_root_inv = Sigma_det_root_inv, 
+                                        Sigma_inv = Sigma_inv))
+}
+mean(log(f_deltaST/(f_deltaT*f_deltaS)))
+sd(log(f_deltaST/(f_deltaT*f_deltaS)))/sqrt(500)
+```
+
+```{r}
+source("delete.R")
+rho12 = 0.1
+rho13 = 0.4
+rho14 = 0.1
+rho23 = 0.1
+rho24 = 0.4
+rho34 = 0.1
+Sigma = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+  Sigma_det_root_inv = det(Sigma)**-0.5
+  Sigma_inv = solve(Sigma)
+  SigmaS = matrix(c(1, rho13, rho13, 1), nrow = 2)
+  SigmaS_det_root_inv = det(SigmaS)**-0.5
+  SigmaS_inv = solve(SigmaS)
+  SigmaT = matrix(c(1, rho24, rho24, 1), nrow = 2)
+  SigmaT_det_root_inv = det(SigmaT)**-0.5
+  SigmaT_inv = solve(SigmaT)
+
+
+temp = 1:500
+for(i in 1:500){
+  delta_s = S_delta[i]
+  delta_t = T_delta[i]
+  temp[i] = sample_rh(delta_s = delta_s, delta_t = delta_t)
+}
+
+mean(temp)
+sd(temp)/sqrt(500)
+
+
+
+r_h(Sigma, n = 500)
+
+
+sample_rh(delta_s = 0.2, delta_t = 0.2)
+
+
+
+log(f_deltaST/(f_deltaT*f_deltaS))[300]
+f_deltaS[300]
+f_deltaST[300]
+f_deltaT[300]
+```
+
+
+
+
+## Copula Model
+
+The copula model is fitted in the second stage. To this end, the orginal PFS and OS times are transformed to uniform variables using the fitted survival functions. These uniform variables are then used to fit the copula model. 
+Two parameters are fitted with this copula model: $\rho_{S_0, T_0}$ and $\rho_{S_1, T_1}$. The other four correlation parameters are part of the sensitivity analysis. 
+
+```{r}
+cop_fit_ctrl = fit_copula(data = new_data[new_data$Treat == 0,], inits = 2.8)
+cop_fit_trt = fit_copula(data = new_data[new_data$Treat == 1,], inits = 2.8)
+
+rho13 = (exp(cop_fit_ctrl$par[1]) - 1)/(exp(cop_fit_ctrl$par[1]) + 1)
+rho24 = (exp(cop_fit_trt$par[1]) - 1)/(exp(cop_fit_trt$par[1]) + 1)
+```
+
+The observable correlations are `r rho13` for the control group, and `r rho24` for the treated group.
+
+# Sensitivity Analysis
+
+The sensitivity analysis consists of sampling positive definite matrices. Given such a matrix, the measures of surrogacy can be derived. In this case, only $\rho_{\Delta}$ is considered as a measure of surrogacy because it easily follows from the normal copula parameters. 
+
+```{r}
+grid = seq(-1, 1, 0.4)
+Pos.Def.Matrices(T0S0 = rho13, T1S1 = rho24,
+                 T0T1 = grid, S0S1 = grid, T1S0 = grid, T0S1 = grid)
+# Generated.Matrices = readRDS(file = "many_matrices.RData")
+posdef_gen_matrices = Generated.Matrices[Generated.Matrices$Pos.Def.Status == 1,]
+# saveRDS(object = Generated.Matrices, file = "many_matrices.RData")
+rho_delta = numeric()
+for(i in 1:nrow(posdef_gen_matrices)){
+  num = posdef_gen_matrices[i, "T0S0"] + posdef_gen_matrices[i, "T1S1"] - posdef_gen_matrices[i, "T1S0"] - posdef_gen_matrices[i, "T0S1"]
+  denom = 2*sqrt((1 - posdef_gen_matrices[i, "T0T1"])*
+                   (1 - posdef_gen_matrices[i, "S0S1"]))
+  rho_delta = c(rho_delta, num/denom)
+}
+hist(rho_delta)
+
+posdef_Sigma_list = as.list(1:nrow(posdef_gen_matrices))
+for(i in 1:nrow(posdef_gen_matrices)){
+  rho12 = posdef_gen_matrices[i, "S0S1"]
+  rho13 = posdef_gen_matrices[i, "T0S0"]
+  rho14 = posdef_gen_matrices[i, "T1S0"]
+  rho23 = posdef_gen_matrices[i, "T0S1"]
+  rho24 = posdef_gen_matrices[i, "T1S1"]
+  rho34 = posdef_gen_matrices[i, "T0T1"]
+  Sigma_temp = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+  posdef_Sigma_list[[i]] = Sigma_temp
+}
+library(parallel)
+cl = makeCluster(5)
+clusterExport(cl, ls())
+clusterEvalQ(cl, library(mvtnorm))
+clusterEvalQ(cl, library(purrr))
+clusterEvalQ(cl, library(flexsurv))
+clusterEvalQ(cl, source("delete.R"))
+I_vec = unlist(parLapply(cl = cl, fun = r_h, X = posdef_Sigma_list, 
+                           n = 500))
+stopCluster(cl)
+hist(1 - exp(-2*I_vec))
+
+```
+
+The histogram clearly indicates that across almost all realities compatible with the data, the ICA is very large. This indicates that PFS is a good surrogate for OS for the types of treatments and types of patients included in the data set. The histogram is based on 2085 positive definite matrices.
+
+
+
+

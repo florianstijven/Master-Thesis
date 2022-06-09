@@ -1,0 +1,311 @@
+---
+title: "Basic Functions"
+author: "Florian Stijven"
+date: "9-3-2022"
+output: pdf_document
+---
+In this file, the basic functions are defined which are further needed to implement the proposed methods. 
+
+```{r}
+library(mvtnorm)
+library(purrr)
+library(tidyverse)
+library(flexsurv)
+```
+
+
+# Likelihood
+
+The model likelihood is defined given all parameters. This likelihood consists of two separate contributions. The contributions for patients in the treatment and control group are distinct. The unidentifiable correlation parameter don't have an influence on the likelihood and are thus not included in the function. However, the identifiable correlations do impose a restriction on what values for the unidentifiable correlations are allowed.
+
+First, the gaussian copula likelihood is defined.
+
+```{r}
+# likelihood contribution for one observation
+# either (S_0, T_0), or (S_1, T_1) are observed
+copula_loglik_obs = function(u, v, rho_comp){
+  #rho_comp corresponds to the correlation between the surrogate and 
+  #true endpoint in the respective group
+  #u and v are the cdf transformed values for the surrogate and true endpoint
+  Sigma = matrix(data = c(1, rho_comp, rho_comp, 1), nrow = 2)
+  q_u = qnorm(u)
+  q_v = qnorm(v)
+  num = dmvnorm(x = c(q_u, q_v), mean = c(0, 0), sigma = Sigma, log = FALSE)
+  denom = dnorm(q_u)*dnorm(q_v)
+  return(log(num/denom))
+}
+
+# all identifiable correlations are parameters of this function
+copula_loglik_all = function(data, rho13, rho24){
+  #in data, the first column should contain u, second v, and third treatment indicator
+  loglik = 0
+  n = nrow(data)
+  for (i in 1:n){
+    u = data[i, 1]
+    v = data[i, 2]
+    if(data[i, 3] == 0){
+      loglik = loglik + copula_loglik_obs(u, v, rho13)
+    }
+    else{
+      loglik = loglik + copula_loglik_obs(u, v, rho24)
+    }
+  }
+  return(loglik)
+}
+```
+
+The copula likelihood multiplied with the marginal densities is the likelihood for the original data. The total loglikelihood is as a consequence the sum of the copula loglikelihood and the loglikelihood based on the marginal densities.
+
+For now, the marginal densities are defined as weibull distributions (parameterisation see Wikipedia).
+
+```{r}
+#WEIBULL
+full_loglik_weibull = function(data, rho13, rho24,
+                               lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                               k_s0, k_s1, k_t0, k_t1){
+  #data in cdf transformed format
+  data_copula = cdf_trans_weibull_all(data,
+                                      lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                                      k_s0, k_s1, k_t0, k_t1)
+  #copula log likelihood
+  copula_loglik = copula_loglik_all(data_copula, rho13, rho24)
+  #sum of marginal log likelihoods
+  marginal_loglik = marg_loglik_all(data,
+                                    lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                                    k_s0, k_s1, k_t0, k_t1)
+  return(copula_loglik + marginal_loglik)
+}
+
+#marginal log likelihood for one observation
+marg_loglik_obs_weibull = function(s, t, 
+                           lambda_s, k_s, lambda_t, k_t){
+  loglik_s = dweibull(x = s, shape = k_s, scale = lambda_s, log = TRUE)
+  loglik_t = dweibull(x = t, shape = k_t, scale = lambda_t, log = TRUE)
+  return(loglik_t + loglik_s)
+}
+
+#marginal log likelihood for all observations
+marg_loglik_all_weibull = function(data,
+                           lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                           k_s0, k_s1, k_t0, k_t1){
+  loglik = 0
+  n = nrow(data)
+  for (i in 1:n){
+    s = data[i, 1]
+    t = data[i, 2]
+    if(data[i, 3] == 0){
+      loglik = loglik + marg_loglik_obs(s, t, lambda_s0, k_s0,
+                                                 lambda_t0, k_t0)
+    }
+    else{
+      loglik = loglik + marg_loglik_obs(s, t, lambda_s1, k_s1,
+                                                 lambda_t1, k_t1)
+    }
+  }
+  return(loglik)
+}
+
+#transform one observation
+cdf_trans_weibull_obs = function(s, t, 
+                                 lambda_s, k_s, lambda_t, k_t){
+  return(c(pweibull(s, shape = k_s, scale = lambda_s),
+           pweibull(t, shape = k_t, scale = lambda_t)))
+}
+
+#transform all observations
+cdf_trans_weibull_all = function(data, 
+                                 lambda_s0, lambda_s1, lambda_t0, lambda_t1,
+                                 k_s0, k_s1, k_t0, k_t1){
+  n = nrow(data)
+  data_transformed = data
+  for (i in 1:n){
+    s = data[i, 1]
+    t = data[i, 2]
+    if(data[i, 3] == 0){
+      data_transformed[i, 1] = pweibull(s, shape = k_s0, scale = lambda_s0)
+      data_transformed[i, 2] = pweibull(t, shape = k_t0, scale = lambda_t0)
+    }
+    else{
+      data_transformed[i, 1] = pweibull(s, shape = k_s1, scale = lambda_s1)
+      data_transformed[i, 2] = pweibull(t, shape = k_t1, scale = lambda_t1)
+    }
+  }
+  return(data_transformed)
+}
+  
+```
+
+```{r}
+#LOGLOGISTIC
+full_loglik_llog = function(data, rho13, rho24,
+                               alpha_s0, alpha_s1, alpha_t0, alpha_t1,
+                               beta_s0, beta_s1, beta_t0, beta_t1){
+  #data in cdf transformed format
+  data_copula = cdf_trans_llog_all(data,
+                                      alpha_s0, alpha_s1, alpha_t0, alpha_t1,
+                                      beta_s0, beta_s1, beta_t0, beta_t1)
+  #copula log likelihood
+  copula_loglik = copula_loglik_all(data_copula, rho13, rho24)
+  #sum of marginal log likelihoods
+  marginal_loglik = marg_loglik_all_llog(data,
+                                    alpha_s0, alpha_s1, alpha_t0, alpha_t1,
+                                    beta_s0, beta_s1, beta_t0, beta_t1)
+  return(copula_loglik + marginal_loglik)
+}
+
+#marginal log likelihood for one observation
+marg_loglik_obs_llog = function(s, t, 
+                           alpha_s, beta_s, alpha_t, beta_t){
+  loglik_s = dllogis(x = t, shape = beta_s, scale = alpha_s, log = TRUE)
+  loglik_t = dllogis(x = t, shape = beta_t, scale = alpha_t, log = TRUE)
+  return(loglik_t + loglik_s)
+}
+
+#marginal log likelihood for all observations
+marg_loglik_all_llog = function(data,
+                           alpha_s0, alpha_s1, alpha_t0, alpha_t1,
+                                    beta_s0, beta_s1, beta_t0, beta_t1){
+  loglik = 0
+  n = nrow(data)
+  for (i in 1:n){
+    s = data[i, 1]
+    t = data[i, 2]
+    if(data[i, 3] == 0){
+      loglik = loglik + marg_loglik_obs_llog(s, t, alpha_s0, alpha_s0,
+                                                 beta_t0, beta_t0)
+    }
+    else{
+      loglik = loglik + marg_loglik_obs_llog(s, t, alpha_s1, alpha_s1,
+                                                 beta_t1, beta_t1)
+    }
+  }
+  return(loglik)
+}
+
+#transform one observation
+cdf_trans_llog_obs = function(s, t, 
+                                 alpha_s, beta_s, alpha_t, beta_t){
+  return(c(pllogis(s, shape = beta_s, scale = alpha_s),
+           pllogis(t, shape = beta_t, scale = alpha_t)))
+}
+
+#transform all observations
+cdf_trans_llog_all = function(data, 
+                                 alpha_s0, alpha_s1, alpha_t0, alpha_t1,
+                                    beta_s0, beta_s1, beta_t0, beta_t1){
+  n = nrow(data)
+  data_transformed = data
+  for (i in 1:n){
+    s = data[i, 1]
+    t = data[i, 2]
+    if(data[i, 3] == 0){
+      data_transformed[i, 1] = pweibull(s, shape = beta_s0, scale = alpha_s0)
+      data_transformed[i, 2] = pweibull(t, shape = beta_t0, scale = alpha_t0)
+    }
+    else{
+      data_transformed[i, 1] = pweibull(s, shape = beta_s1, scale = alpha_s1)
+      data_transformed[i, 2] = pweibull(t, shape = beta_t1, scale = alpha_t1)
+    }
+  }
+  return(data_transformed)
+}
+```
+
+
+# Model Fitting
+
+The model can be fitted with Newton-Raphson.
+
+```{r}
+#WEIBULL
+full_minus2loglik_weibull_vec = function(parms, data){
+  #parms is the parameter vector
+  rho13 = (exp(parms[1]) - 1)/(exp(parms[1]) + 1)
+  rho24 = (exp(parms[2]) - 1)/(exp(parms[2]) + 1)
+  lambda_s0 = exp(parms[3])
+  lambda_s1 = exp(parms[4])
+  lambda_t0 = exp(parms[5])
+  lambda_t1 = exp(parms[6])
+  k_s0 = exp(parms[7])
+  k_s1 = exp(parms[8])
+  k_t0 = exp(parms[9])
+  k_t1 = exp(parms[10])
+  return(-2*full_loglik_weibull(data, rho13, rho24, lambda_s0, lambda_s1,
+                                lambda_t0, lambda_t1, k_s0, k_s1, k_t0, k_t1))
+}
+rho13_start = log((1 + 0.8)/(1 - 0.8))
+rho24_start = log((1 + 0.8)/(1 - 0.8))
+initial = c(rho13_start, rho24_start, log(1.5), log(5), log(12), log(15), log(1), log(1.5), log(2), log(2))
+full_minus2loglik_weibull_vec(initial, data_observed)
+optim(par = initial, fn = full_minus2loglik_weibull_vec, method = "L-BFGS-B", 
+      data = data_observed, control = list(maxit = 50), hessian = TRUE)
+```
+
+```{r}
+#LOGLOGISTIC
+full_minus2loglik_llog_vec = function(parms, data){
+  #parms is the parameter vector
+  rho13 = (exp(parms[1]) - 1)/(exp(parms[1]) + 1)
+  rho24 = (exp(parms[2]) - 1)/(exp(parms[2]) + 1)
+  alpha_s0 = exp(parms[3])
+  alpha_s1 = exp(parms[4])
+  alpha_t0 = exp(parms[5])
+  alpha_t1 = exp(parms[6])
+  beta_s0 = exp(parms[7])
+  beta_s1 = exp(parms[8])
+  beta_t0 = exp(parms[9])
+  beta_t1 = exp(parms[10])
+  return(-2*full_loglik_llog(data, rho13, rho24, alpha_s0, alpha_s1,
+                                alpha_t0, alpha_t1, 
+                                beta_s0, beta_s1, beta_t0, beta_t1))
+}
+rho13_start = log((1 + 0.8)/(1 - 0.8))
+rho24_start = log((1 + 0.8)/(1 - 0.8))
+initial = c(rho13_start, rho24_start, log(1), log(7), log(8), log(14), log(2), log(2), log(3), log(3))
+full_minus2loglik_llog_vec(initial, data_observed)
+optim(par = initial, fn = full_minus2loglik_llog_vec, method = "BFGS", 
+      data = data_observed, control = list(maxit = 50), hessian = TRUE)
+```
+
+
+
+# Simulation
+
+First, sample from a multivariate normal. Transform each variable using the cdf transformation. Then, transform these uniform variables to Weibull distributed variables with the icdf transformation.
+
+```{r}
+n = 200
+Sigma = matrix(data = c(1, 0.3, 0.8, 0.3,
+                        0.3, 1, 0.3, 0.8,
+                        0.8, 0.3, 1, 0.3,
+                        0.3, 0.8, 0.3, 1), nrow = 4)
+data_norm = rmvnorm(n = n, sigma = Sigma)
+data_uniform = pnorm(q = data_norm)
+
+data_weibull = data_uniform
+data_weibull[,1] = qweibull(p = data_uniform[,1], shape = 1, scale = 1.5)
+data_weibull[,2] = qweibull(p = data_uniform[,2], shape = 1.5, scale = 5)
+data_weibull[,3] = qweibull(p = data_uniform[,3], shape = 2, scale = 12)
+data_weibull[,4] = qweibull(p = data_uniform[,4], shape = 2, scale = 15)
+
+data_final = data.frame(data_weibull)
+colnames(data_final) = c("S_0", "S_1", "T_0", "T_1")
+data_final$treated = c(rep(0L, n/2), rep(1L, n/2))
+data_control = data_final[1:(n/2), c(1,3, 5)]
+colnames(data_control) = c("S", "T", "treated")
+data_treated = data_final[(n/2 + 1):n, c(2,4,5)]
+colnames(data_treated) = c("S", "T", "treated")
+data_observed = bind_rows(data_control, data_treated)
+
+
+
+full_loglik_weibull(data_observed, rho13 = 0.8, rho24 = 0.8,
+                               lambda_s0 = 1.5, lambda_s1 = 5, lambda_t0 = 12, lambda_t1 = 15,
+                               k_s0 = 1, k_s1 = 1.5, k_t0 = 2, k_t1 = 2)
+
+
+```
+
+
+
+

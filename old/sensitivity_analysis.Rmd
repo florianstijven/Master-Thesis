@@ -1,0 +1,54 @@
+---
+title: "Sensitivity Anlysis"
+author: "Florian Stijven"
+date: "10-3-2022"
+output: pdf_document
+---
+
+
+# Simulation of positive definite matrices
+
+For now, we just sample the unidentified correlations from U(-1, 1) and only retain the resulting positive definite matrices.
+
+```{r}
+#determines whether given matrix is positive definite
+pos_def = function(Sigma){
+  eigen_values = eigen(x = Sigma, symmetric = TRUE)$values
+  return(all(eigen_values > 0))
+}
+
+#samples a correlation matrix, given the identifiable correlations
+sample_Sigma = function(rho13, rho24){
+  rho12 = runif(n = 1, min = -1, max = 1)
+  rho14 = runif(n = 1, min = -1, max = 1)
+  rho23 = runif(n = 1, min = -1, max = 1)
+  rho34 = runif(n = 1, min = -1, max = 1)
+  Sigma_sampled = matrix(c(1, rho12, rho13, rho14, 0.4,
+                           rho12, 1, rho23, rho24, 0.4,
+                           rho13, rho23, 1, rho34, 0.4,
+                           rho14, rho24, rho34, 1, 0.4,
+                           0.4, 0.4, 0.4, 0.4, 1), nrow = 5)
+  return(Sigma_sampled)
+}
+sample_Sigma(0.8, 0.8)
+
+good_Sigma = logical()
+rho12 <- rho14 <- numeric()
+for(i in 1:50000){
+  sampled_Sigma = sample_Sigma(0.8, 0.8)
+  good_Sigma = c(good_Sigma, pos_def(sampled_Sigma))
+  rho12 = c(rho12, sampled_Sigma[1, 2])
+  rho14 = c(rho14, sampled_Sigma[1, 4])
+}
+
+hist(rho12[good_Sigma], breaks = 40)
+hist(rho14[good_Sigma], breaks = 40)
+plot(rho12[good_Sigma], rho14[good_Sigma], xlim = c(-1,1), ylim = c(-1,1))
+points(temp12, temp14, col = "red")
+
+
+temp12 = rho12[good_Sigma]
+temp14 = rho14[good_Sigma]
+```
+
+

@@ -1,0 +1,358 @@
+---
+title: "Ovarian Case Study - New Approach"
+author: "Florian Stijven"
+date: "3-4-2022"
+output: pdf_document
+---
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE)
+source(file = "density_functions.R")
+source(file = "information_theoretic_functions_new.R")
+library(purrr)
+library(flexsurv)
+library(Surrogate)
+library(tidyverse)
+library(survival)
+library(mvtnorm)
+data("Ovarian")
+```
+
+```{r}
+#put data in correct format
+data = read.csv("ovarian.csv")
+data = data[,-1]
+data$Pfs = data$Pfs*12
+data$Surv = data$Surv*12
+```
+
+# Model
+
+The same gaussian copula model is considered as before. But now, the time-ordering is explicitly taking into account by modeling time-to-progression (TTP), instead of progression-free survival (PFS), and overall survival (OS) jointly. This model induces the relation between PFS and OS because PFS = min(TTP, OS). In this way, the mathematical challenges caused by $Pr(PFS_i = t, OS_i = t) > 0$ are appropriately taken into account. A latent value for TTP is assumed such that $Pr(PFS_i = t,  OS_i = t) = Pr(TTP_i > t, OS_i = t) > 0$.
+
+This specification of the joint distribution is illustrated in the following figure (Lee et. al.~, 2015). The upper wedge for the joint distribution of TTP and OS is modeled by the upper wedge of the gaussian copula model. However, there can be no observations in the lower wedge. Therefore, this part of the gaussian copula model is denoted by $f_{\infty}(t_2)$ where $t_2$ is the survival time and the progression time is set $t_1 = \infty$. This function follows from the gaussian copula model on the lower wedge: $f_{\infty}(t_2) = Pr(T_1 > t_2, T_2 = t_2)$. $f_{\infty}(t_2)$ corresponds to the survival distribution when progression does not occur before death. 
+
+From this notation, the distribution for PFS immediately follows (PFS is denoted by $T^*_1$). On the upper wedge, the joint distribution for PFS and OS is the same as for TTP and OS. If death occurs before progression, the density is denoted by $Pr(T^*_1 = t_1, T_2 = t_2) = f_{\infty}(t_2)$ where $t_1 = t_2$. PFS and OS are identical if death occurs before progression.
+
+```{r, out.width="50%"}
+knitr::include_graphics(path = "scr_copula.png")
+```
+
+
+
+# Fit Copula Model Directly
+
+The Copula model is fitted directly.
+
+```{r}
+#number of knots
+nknots = 2
+#load function for log likelihood
+source("copula_SCR_fitting.R")
+#CONTROL GROUP
+#marginal fit as starting values
+fit_s0 = flexsurvspline(formula = Surv(Pfs, PfsInd)~1, data = data, 
+                         subset = data$Treat == 0, k = nknots, scale = "hazard")
+fit_t0 = flexsurvspline(formula = Surv(Surv, SurvInd)~1, data = data, 
+                         subset = data$Treat == 0, k = nknots, scale = "hazard")
+inits = c(fit_s0$coefficients, fit_t0$coefficients, 3.23)
+maxit = 100
+fit_0 = optim(par = inits, fn = normal_loglik_florian, method = "BFGS",
+      X = data$Pfs[data$Treat == 0], Y = data$Surv[data$Treat == 0], 
+      d1 = data$PfsInd[data$Treat == 0], d2 = data$SurvInd[data$Treat == 0], k = nknots,
+      knotsx = fit_s0$knots, knotsy = fit_t0$knots, 
+      control = list(maxit = maxit, REPORT = 2, trace = TRUE, fnscale = -1))
+rho13 = (exp(fit_0$par[9]) - 1)/(exp(fit_0$par[9]) + 1)
+Sigma_0 = matrix(c(1,rho13, rho13, 1), nrow = 2)
+#TREATED GROUP
+#marginal fit as starting values
+fit_s1 = flexsurvspline(formula = Surv(Pfs, PfsInd)~1, data = data, 
+                         subset = data$Treat == 1, k = nknots, scale = "hazard")
+fit_t1 = flexsurvspline(formula = Surv(Surv, SurvInd)~1, data = data, 
+                         subset = data$Treat == 1, k = nknots, scale = "hazard")
+inits = c(fit_s1$coefficients, fit_t1$coefficients, 3.23)
+maxit = 100
+fit_1 = optim(par = inits, fn = normal_loglik_florian, method = "BFGS",
+      X = data$Pfs[data$Treat == 1], Y = data$Surv[data$Treat == 1], 
+      d1 = data$PfsInd[data$Treat == 1], d2 = data$SurvInd[data$Treat == 1], k = nknots,
+      knotsx = fit_s1$knots, knotsy = fit_t1$knots, 
+      control = list(maxit = maxit, REPORT = 2, trace = TRUE, fnscale = -1))
+rho24 = (exp(fit_1$par[9]) - 1)/(exp(fit_1$par[9]) + 1)
+Sigma_1 = matrix(c(1,rho24, rho24, 1), nrow = 2)
+```
+The observable correlations are `r rho13` for the control group, and `r rho24` for the treated group. These are slightly larger as compared to when PFS is modeled directly, without regard for the time ordering constraints.
+
+
+## Goodness of fit
+
+The marginal survival distribution for OS is identifiable. So we can compare the corresponding KM-estimate with the model based estimate. The marginal distribution for TTP is not identifiable. The marginal distribution for TTP is moreover not well defined because progression after death is not possible. However, from the model we can derive the marginal distribution of PFS which is also identifiable. So the corresponding model based estimate for the survival function of PFS is compared with the KM-estimate.
+
+The fitted gaussian copula model induces the survival function for PFS as follows:
+$$Pr(T^*_1 > t_1) = Pr(\min(T_1, T_2) > t_1) = Pr(T_1 > t_1, T_2 > t_1) $$
+$Pr(T_1 > t_1, T_2 > t_1)$ directly follows from the gaussian copula model. 
+
+```{r}
+grid = seq(0.01, 36, 0.1)
+par(mfrow = c(2,2))
+#goodness of fit of marginal survival function of OS
+Surv_t0 = 1 - psurvspline(q = grid, gamma = fit_0$par[5:8], knots = fit_t0$knots)
+plot(survfit(Surv(Surv, SurvInd)~1, data = data, subset = data$Treat == 0),
+     xlim = c(0, 36), main = "OS (0)", xlab = "time (months)", ylab = "S(t)")
+lines(grid, Surv_t0, col = "red")
+
+Surv_t1 = 1 - psurvspline(q = grid, gamma = fit_1$par[5:8], knots = fit_t1$knots)
+plot(survfit(Surv(Surv, SurvInd)~1, data = data, subset = data$Treat == 1),
+     xlim = c(0, 36), main = "OS (1)", xlab = "time (months)", ylab = "S(t)")
+lines(grid, Surv_t1, col = "red")
+
+#goodness of fit for marginal distribution of PFS
+pfs_surv = function(s, gammas, gammat, knots, knott, Sigma){
+  qs = qnorm(psurvspline(q = s, gamma = gammas, knots = knots))
+  qt = qnorm(psurvspline(q = s, gamma = gammat, knots = knott))
+  return(pmvnorm(lower = c(qs, qt), mean = c(0,0), sigma = Sigma))
+}
+
+probs0 = sapply(grid, pfs_surv, gammas = fit_0$par[1:4], gammat = fit_0$par[5:8],
+              knots = fit_s0$knots, knott = fit_t0$knots, Sigma = Sigma_0)
+plot(survfit(Surv(data$Pfs, pmax(data$PfsInd, data$SurvInd))~1, data = data, 
+             subset = data$Treat == 0),
+     xlim = c(0, 36), main = "PFS (0)", xlab = "time (months)", ylab = "S(t)")
+lines(grid, probs0, col = "red")
+
+probs1 = sapply(grid, pfs_surv, gammas = fit_1$par[1:4], gammat = fit_1$par[5:8],
+              knots = fit_s1$knots, knott = fit_t1$knots, Sigma = Sigma_1)
+plot(survfit(Surv(data$Pfs, pmax(data$PfsInd, data$SurvInd))~1, data = data, 
+             subset = data$Treat == 1),
+     xlim = c(0, 36), main = "PFS (1)", xlab = "time (months)", ylab = "S(t)")
+lines(grid, probs1, col = "red")
+```
+
+The (marginal) fit is good. Although, the model is fitted using progression as an endpoint, the induces survival function for PFS corresponds closely to the KM-estimate. This is an indication that the model is appropriate. Nonetheless, the issue with very long OS remains. This is less problematic if the measures of association further considered are based on ranks. 
+
+The goodness of fit is also evaluated for the joint distribution of PFS and OS in both groups by sampling from the fitted model, and comparing this sample with the original data. However, the original data are censored which complicates a direct comparison. The distribution of censoring indicators is therefore first estimated. Next, values are sampled from this distribution as to artificially censor the sample from the fitted model. In this way, the sample from the fitted model is comparable with the original data.
+
+```{r}
+#estimate survival function for censoring
+km_censor = flexsurvspline(Surv(pmax(Pfs, Surv), 1 - SurvInd)~1, 
+                           data = data, k = 3)
+#plot(km_censor)
+#sample from KM-curve
+U = runif(n = nrow(data))
+C = qsurvspline(p = U, gamma = km_censor$coefficients, knots = km_censor$knots)
+par(mfrow = c(2,2))
+#sample from model for control
+data_temp = data[data$Treat == 0,]
+data_control = data_temp
+n_temp = nrow(data_temp)
+gauss_copula = copula::ellipCopula(family = "normal", param = rho13, dim = 2, dispstr = "un")
+X = copula::rCopula(n_temp, gauss_copula)
+data_temp$Surv = pmin(qsurvspline(p = X[,2], gamma = fit_t0$coefficients, knots = fit_t0$knots),
+                         C[1:n_temp])
+data_temp$Pfs = pmin(qsurvspline(p = X[,1], gamma = fit_s0$coefficients, knots = fit_s0$knots), 
+                        C[1:n_temp], data_temp$Surv)
+cens = pmax(data_temp$Pfs, data_temp$Surv) == C[1:n_temp]
+#plot sample and true data
+plot(data_temp$Pfs[!cens], data_temp$Surv[!cens], 
+     col = "red", xlim = c(0,24), ylim = c(0,24), 
+     main = "Fitted Model", xlab = "S_0", ylab = "T_0")
+points(data_temp$Pfs[cens], data_temp$Surv[cens])
+plot(data_control$Pfs[(data_control$SurvInd == 1)], 
+     data_control$Surv[(data_control$SurvInd == 1)], 
+     col = "red", xlim = c(0,24), ylim = c(0,24), 
+     main = "Observed Data", xlab = "S_0", ylab = "T_0")
+points(data_control$Pfs[!(data_control$SurvInd == 1)], data_control$Surv[!(data_control$SurvInd == 1)])
+
+#sample from model for control
+data_temp = data[data$Treat == 1,]
+data_control = data_temp
+n_temp = nrow(data_temp)
+gauss_copula = copula::ellipCopula(family = "normal", param = rho24, dim = 2, dispstr = "un")
+X = copula::rCopula(n_temp, gauss_copula)
+data_temp$Surv = pmin(qsurvspline(p = X[,2], gamma = fit_t0$coefficients, knots = fit_t0$knots),
+                         C[1:n_temp])
+data_temp$Pfs = pmin(qsurvspline(p = X[,1], gamma = fit_s0$coefficients, knots = fit_s0$knots), 
+                        C[1:n_temp], data_temp$Surv)
+
+cens = data_temp$Surv == C[1:n_temp]
+#plot sample and true data
+plot(data_temp$Pfs[!cens], data_temp$Surv[!cens], 
+     col = "red", xlim = c(0,24), ylim = c(0,24), 
+     main = "Fitted Model", xlab = "S_1", ylab = "T_1")
+points(data_temp$Pfs[cens], data_temp$Surv[cens])
+plot(data_control$Pfs[(data_control$SurvInd == 1)], 
+     data_control$Surv[(data_control$SurvInd == 1)], 
+     col = "red", xlim = c(0,24), ylim = c(0,24), 
+     main = "Observed Data", xlab = "S_1", ylab = "T_1")
+points(data_control$Pfs[!(data_control$SurvInd == 1)], data_control$Surv[!(data_control$SurvInd == 1)])
+```
+
+These plots indicate that the fit (at least the observable part) is good. Explicitly taking into account the time-orderings thus results in a better fit. This does however not necessarily mean that the conclusions with respect to the strength of surrogacy are different. 
+
+## Measures of Surrogacy
+
+The firsts measure is $\rho_\Delta$. This measure is however ill-defined because it is based on the model where a latent value for progression is assumed if death occurs before progression. Moreover, this is in fact a measure for TTP, and not for PFS. Ignoring these concerns, the histogram for $\rho_\Delta$ is indicate for strong surrogacy.
+
+$$\rho_{\Delta} = cor(q_{S_1} - q_{S_0}, q_{T_1} - q_{T_0}) = \frac{\rho_{S_0, T_0} + \rho_{S_1, T_1} - \rho_{S_0, T_1} - \rho_{S_1, T_0}}{2 \sqrt{(1 - \rho_{T_0, T_1})(1 - \rho_{S_0, S_1})}}$$
+
+```{r}
+grid = seq(-1, 1, 0.2)
+Pos.Def.Matrices(T0S0 = rho13, T1S1 = rho24,
+                 T0T1 = grid, S0S1 = grid, T1S0 = grid, T0S1 = grid)
+# Generated.Matrices = readRDS(file = "many_matrices.RData")
+posdef_gen_matrices = Generated.Matrices[Generated.Matrices$Pos.Def.Status == 1,]
+# saveRDS(object = Generated.Matrices, file = "many_matrices.RData")
+rho_delta = numeric()
+for(i in 1:nrow(posdef_gen_matrices)){
+  num = posdef_gen_matrices[i, "T0S0"] + posdef_gen_matrices[i, "T1S1"] - posdef_gen_matrices[i, "T1S0"] - posdef_gen_matrices[i, "T0S1"]
+  denom = 2*sqrt((1 - posdef_gen_matrices[i, "T0T1"])*
+                   (1 - posdef_gen_matrices[i, "S0S1"]))
+  rho_delta = c(rho_delta, num/denom)
+}
+hist(rho_delta, main = "Sensitivity Analysis for rho_delta", xlab = "rho_delta", xlim = c(0, 1))
+posdef_Sigma_list = as.list(1:nrow(posdef_gen_matrices))
+for(i in 1:nrow(posdef_gen_matrices)){
+  rho12 = posdef_gen_matrices[i, "S0S1"]
+  rho13 = posdef_gen_matrices[i, "T0S0"]
+  rho14 = posdef_gen_matrices[i, "T1S0"]
+  rho23 = posdef_gen_matrices[i, "T0S1"]
+  rho24 = posdef_gen_matrices[i, "T1S1"]
+  rho34 = posdef_gen_matrices[i, "T0T1"]
+  Sigma_temp = matrix(c(1, rho12, rho13, rho14,
+                   rho12, 1, rho23, rho24,
+                   rho13, rho23, 1, rho34,
+                   rho14, rho24, rho34, 1), nrow = 4)
+  posdef_Sigma_list[[i]] = Sigma_temp
+}
+```
+
+Two additional measures of surrogacy are considered based on ranks: Kendall's tau and Spearman's correlation. Computing these measures for a bivariate distribution requires integration. However, the joint distribution of $\Delta S$ and $\Delta T$ is very complicated. Nonetheless, it is easy to sample from this distribution. These measures are therefore computed by Monte Carlo integration. This is straightforward. For each sampled positive definite matrix, 10.000 samples are drawn from the corresponding model. Kendall's tau and Spearman's rho are consequently computed based on this sample.  
+
+$$\rho_{sp} = cor(R(\Delta S), R(\Delta T))$$
+$$\tau =  P((\Delta S_1 - \Delta S_2)(\Delta T_1 - \Delta T_2) > 0) - P((\Delta S_1 - \Delta S_2)(\Delta T_1 - \Delta T_2) < 0)$$
+
+```{r}
+n_prec = 10000
+p = length(posdef_Sigma_list)
+kendall = 1:p
+sp_rho = 1:p
+for(i in 1:p){
+  q_vec = rmvnorm(n = n_prec, mean = c(0,0,0,0), sigma = posdef_Sigma_list[[i]])
+  u_vec = pnorm(q = q_vec)
+  s0 = qsurvspline(p = u_vec[,1], gamma = fit_0$par[1:4], knots = fit_s0$knots)
+  s1 = qsurvspline(p = u_vec[,2], gamma = fit_1$par[1:4], knots = fit_s1$knots)
+  t0 = qsurvspline(p = u_vec[,3], gamma = fit_0$par[5:8], knots = fit_t0$knots)
+  t1 = qsurvspline(p = u_vec[,4], gamma = fit_1$par[5:8], knots = fit_t1$knots)
+  pfs0 = pmin(s0, t0)
+  pfs1 = pmin(s1, t1)
+  deltaS = pfs1 - pfs0
+  deltaT = t1 - t0
+  kendall[i] = cor.test(deltaS, deltaT, method = "kendall")$estimate
+  sp_rho[i] = cor.test(deltaS, deltaT, method = "spearman")$estimate
+}
+par(mfrow = c(1,2))
+hist(kendall, main = "Sensitivity Analysis for Kendall's tau", xlab = "tau", xlim = c(0, 1))
+hist(sp_rho, main = "Sensitivity Analysis for Spearman's rho", xlab = "rho_sp", xlim = c(0, 1))
+par(mfrow = c(1,1))
+pairs(data.frame(kendall, sp_rho, rho_delta))
+```
+
+The results for the different measures of surrogacy are very similar. Despite these measures being restricted to the $[-1, 1]$ interval, there is some difference in magnitude. With all these measures, it is difficult to provide a cut-off to determine when a measure of surrogacy is indicative for a good surrogate. 
+
+A measure with a clinically more direct interpretation is the individual surrogate threshold effect (ISTE). This measure could be studied further.
+
+
+## Information Theoretic (unfinished) 
+
+The density of $\Delta T$ can be computed by integration (sampling) as before. The histogram is obtained by sampling, the red line is the computed density. They correspond closely, indicating that the computed density is correct.
+
+```{r, eval=FALSE}
+#compute density for delta T
+delta_t = seq(-100, 100, 1)
+f_deltaT = delta_t
+gammat0 = fit_0$par[5:8]
+knott0 = fit_t0$knots
+gammat1 = fit_1$par[5:8]
+knott1 = fit_t1$knots
+N = 2000
+Sigma = posdef_Sigma_list[[80]]
+Sigma = Sigma[3:4, 3:4]
+SigmaT_det_root_inv = det(Sigma)**-0.5
+SigmaT_inv = solve(Sigma)
+for(i in 1:length(delta_t)){
+  if(delta_t[i] < 0){
+      Ut1 = runif(n = N)
+      T1 = qsurvspline(p = Ut1, gamma = gammat1, knots = knott1)
+      T0 = T1 - delta_t[i]
+      Ut0 = psurvspline(q = T0, gamma = gammat0, knots = knott0)
+      f_t = dsurvspline(x = T0, gamma = gammat0, knots = knott0)
+    }
+  else{
+      Ut0 = runif(n = N)
+      T0 = qsurvspline(p = Ut0, gamma = gammat0, knots = knott0)
+      T1 = T0 + delta_t[i]
+      Ut1 = psurvspline(q = T1, gamma = gammat1, knots = knott1)
+      f_t = dsurvspline(x = T1, gamma = gammat1, knots = knott1)
+    }
+  f_deltaT[i] = sum(pmap_dbl(.l = list(u0 = Ut0, u1 = Ut1, t0 = T0, t1 = T1, f_t = f_t), 
+                            .f = density_fast_t0t1_rh,
+                            Sigma_det_root_inv = SigmaT_det_root_inv, 
+                            Sigma_inv = SigmaT_inv))/N
+}
+
+q_vec = rmvnorm(n = n_prec, mean = c(0,0,0,0), sigma = posdef_Sigma_list[[80]])
+u_vec = pnorm(q = q_vec)
+s0 = qsurvspline(p = u_vec[,1], gamma = fit_0$par[1:4], knots = fit_s0$knots)
+s1 = qsurvspline(p = u_vec[,2], gamma = fit_1$par[1:4], knots = fit_s1$knots)
+t0 = qsurvspline(p = u_vec[,3], gamma = fit_0$par[5:8], knots = fit_t0$knots)
+t1 = qsurvspline(p = u_vec[,4], gamma = fit_1$par[5:8], knots = fit_t1$knots)
+pfs0 = pmin(s0, t0)
+pfs1 = pmin(s1, t1)
+deltaS = pfs1 - pfs0
+deltaT = t1 - t0
+
+hist(deltaT[abs(deltaT) < 100], breaks = -100:100, prob = TRUE)
+lines(delta_t, f_deltaT, type = "l", col = "red")
+```
+
+The density for $\Delta S$ is less straightforward because of the atomicity. Still, it can be computed in a similar way is for $\Delta T$.
+
+
+
+```{r, eval=FALSE}
+source("information_theoretic_functions_new.R")
+n_prec = 100000
+Sigma = posdef_Sigma_list[[80]]
+knots0 = fit_s0$knots
+knott0 = fit_t0$knots
+knots1 = fit_s1$knots
+knott1 = fit_t1$knots
+gammas0 = fit_0$par[1:4]
+gammat0 = fit_1$par[1:4]
+gammas1 = fit_0$par[5:8]
+gammat1 = fit_1$par[5:8]
+
+q_vec = rmvnorm(n = n_prec, mean = c(0,0,0,0), sigma = Sigma)
+u_vec = pnorm(q = q_vec)
+s0 = qsurvspline(p = u_vec[,1], gamma = gammas0, knots = knots0)
+s1 = qsurvspline(p = u_vec[,2], gamma = gammas1, knots = knots1)
+t0 = qsurvspline(p = u_vec[,3], gamma = gammat0, knots = knott0)
+t1 = qsurvspline(p = u_vec[,4], gamma = gammat1, knots = knott1)
+pfs0 = pmin(s0, t0)
+pfs1 = pmin(s1, t1)
+deltaS = pfs1 - pfs0
+deltaT = t1 - t0
+cat00 = (s0 < t0) & (s1 < t1)
+cat01 = !(s0 < t0) & (s1 < t1)
+cat10 = (s0 < t0) & !(s1 < t1)
+cat11 = !(s0 < t0) & !(s1 < t1)
+
+grid = seq(-50, 50, 1)
+dens = sapply(X = grid, FUN = density_deltaS_new, Sigma = Sigma, N = 1000,
+              gammas0 = gammas0, gammas1 = gammas1, gammat0 = gammat0, gammat1 = gammat1,
+              knots0 = knots0, knots1 = knots1, knott0 = knott0, knott1 = knott1)
+hist(deltaS[(abs(deltaS) < 50)], prob = TRUE, breaks = -50:50)
+inflate = mean((abs(deltaS) < 50))
+lines(grid, dens/inflate)
+```
+

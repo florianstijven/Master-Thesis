@@ -1,0 +1,29 @@
+slide3:
+	these histograms are each based on 1000 replications of the sensitivty analyses with different assumptions on the unidentifiable associations
+	as presented some time ago, taking time orderings into account is beneficial in terms of more peaked histograms
+	
+	the monotonicity assumption results in wider histograms, whereas the weaker cross-association assumption results in more peaked histograms
+	in this case, I think both assumptions are realistic
+
+slide4:
+	An alternative to making these assumptions is to plot the surrogacy measures against unidentifiable quantitiaties
+	such as the average cross-association in terms of kendall's tau
+		so clearly, as the average cross-association increases, the surrogacy measure tends to decrease
+
+slide5: 
+	just the histograms summarised here
+
+slide6:
+	better to use a grid?
+
+
+sampling is fine
+colorectal, where to get?
+	-> even more than one
+	-> tomasz, Buyse, ibiostat?
+	
+marc might also have ideas about other data sets
+
+	
+	
+	
