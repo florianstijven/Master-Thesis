@@ -1,0 +1,211 @@
+---
+title: "Monte Carlo Integration"
+author: "Florian Stijven"
+date: "18-5-2022"
+output: pdf_document
+---
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE)
+source(file = "density_functions.R")
+source(file = "copula_SCR_fitting.R")
+source(file = "information_theoretic_functions_new.R")
+source(file = "surrogacy_functions.R")
+library(purrr)
+library(flexsurv)
+library(Surrogate)
+library(tidyverse)
+library(survival)
+library(mvtnorm)
+library(copula)
+library(rvinecopulib)
+library(VineCopula)
+library(kdecopula)
+
+n_prec = 1000
+N = 1000
+```
+
+
+```{r}
+#function to compute metrics of surrogacy 
+surrogacy_sens = function(ctrl_par, treat_par, n_prec, N, cop_type, restr, option = 1){
+  collect_df = data.frame(unid = character(0), sp_rho = numeric(0), tau = numeric(0))
+  par(mfrow = c(2,2))
+  knot = 1:2
+  temp = surrogacy_measures_sens(cop_type = cop_type, fit_0_par = ctrl_par, fit_1_par = treat_par,
+                     n_sim = N, n_prec = n_prec,
+                     knots0 = knot, knots1 = knot, knott0 = knot, knott1 = knot, 
+                     minfo_prec = 0, restr = restr, get_unid = TRUE, cop_type2 = "clayton",
+                     option = option)
+  hist(temp$sp_rho, main = "clayton", xlim = c(-1, 1), breaks = seq(-1, 1, 0.05))
+  collect_df = bind_rows(collect_df,
+                         data.frame(unid = "clayton", sp_rho = temp$sp_rho,
+                                    tau = temp$kendall, minfo = temp$minfo))
+  
+  temp = surrogacy_measures_sens(cop_type = cop_type, fit_0_par = ctrl_par, fit_1_par = treat_par,
+                     n_sim = N, n_prec = n_prec,
+                     knots0 = knot, knots1 = knot, knott0 = knot, knott1 = knot, 
+                     minfo_prec = 0, restr = restr, get_unid = TRUE, cop_type2 = "gaussian",
+                     option = option)
+  hist(temp$sp_rho, main = "gaussian", xlim = c(-1, 1), breaks = seq(-1, 1, 0.05))
+  collect_df = bind_rows(collect_df,
+                         data.frame(unid = "gaussian", sp_rho = temp$sp_rho,
+                                    tau = temp$kendall, minfo = temp$minfo))
+  
+  temp = surrogacy_measures_sens(cop_type = cop_type, fit_0_par = ctrl_par, fit_1_par = treat_par,
+                     n_sim = N, n_prec = n_prec,
+                     knots0 = knot, knots1 = knot, knott0 = knot, knott1 = knot, 
+                     minfo_prec = 0, restr = restr, get_unid = TRUE, cop_type2 = "frank",
+                     option = option)
+  hist(temp$sp_rho, main = "frank", xlim = c(-1, 1), breaks = seq(-1, 1, 0.05))
+  collect_df = bind_rows(collect_df,
+                         data.frame(unid = "frank", sp_rho = temp$sp_rho,
+                                    tau = temp$kendall, minfo = temp$minfo))
+  
+  temp = surrogacy_measures_sens(cop_type = cop_type, fit_0_par = ctrl_par, fit_1_par = treat_par,
+                     n_sim = N, n_prec = n_prec,
+                     knots0 = knot, knots1 = knot, knott0 = knot, knott1 = knot, 
+                     minfo_prec = 0, restr = restr, get_unid = TRUE, cop_type2 = "gumbel",
+                     option = option)
+  hist(temp$sp_rho, main = "gumbel", xlim = c(-1, 1), breaks = seq(-1, 1, 0.05)
+       )
+  collect_df = bind_rows(collect_df,
+                         data.frame(unid = "gumbel", sp_rho = temp$sp_rho,
+                                    tau = temp$kendall, minfo = temp$minfo))
+  return(collect_df)
+  }
+```
+
+# Without time ordering
+
+```{r}
+knot = 1:2
+x = seq(0.001, 3, 0.01)
+plot(x = x, y = dsurvspline0(x = x, gamma0 = 2, gamma1 = 2, knots = knot), type = "l")
+lines(x = x, y = dsurvspline0(x = x, gamma0 = 1.5, gamma1 = 2, knots = knot), col = "red")
+plot(x = x, y = dsurvspline0(x = x, gamma0 = 1, gamma1 = 2, knots = knot), type = "l")
+lines(x = x, y = dsurvspline0(x = x, gamma0 = 0.75, gamma1 = 2, knots = knot), col = "red")
+
+```
+
+## Strong
+
+```{r}
+set.seed(1)
+cop_type = "clayton"
+# minfo_prec_vec = c(1000, 2000, 5000, 50000)
+n_prec_vec = c(500, 1000, 2000, 5000, 100000)
+times = 50
+#marginal weibull
+knot = c(1, 5)
+#strong observable association parameters
+theta_c12 = 6
+theta_c34 = 6
+ctrl_par = c(2, 2, 5, 2, theta_c12)
+treat_par = c(1.5, 2, 4, 2, theta_c34)
+u = runif(n = 4, min = 0, max = 1)
+r = sample(x = c(0, 90, 180, 270), size = 4, replace = TRUE)
+
+#initialize vectors to store measures of surrogacy in
+minfo_prec_data <- kendall_n <- sp_rho_n <- kendall <- sp_rho <- minfo <- n_prec_data <- time_data <- cop_type_data <- 1:(times*length(n_prev_vec)*4 + 4)
+
+i = 1
+for(n_prec in n_prec_vec){
+  if(n_prec == 100000) times = 1
+  minfo_prec = n_prec
+  for(time in 1:times){
+    #the dep_measures function resets the seed, monte carlo samplew would be identical
+    #by resetting the ourselves at different, this is resolved
+    for(cop_type2 in c("gaussian", "frank", "clayton", "gumbel")){
+      set.seed(time)
+      if(cop_type2 == "frank"){
+        c = ifelse(r %in% c(90, 270), -u, u)
+        c = sapply(c, iRho, copula = frankCopula())
+        r_n = rep(0,4)
+      }
+      else if(cop_type2 == "gaussian"){
+        c = ifelse(r %in% c(90, 270), -u, u)
+        c = sapply(c, iRho, copula = ellipCopula(family = "normal"))
+        r_n = rep(0,4)
+      }
+      else if(cop_type2 == "clayton"){
+        c = sapply(u, iRho, copula = claytonCopula())
+        r_n = r
+      }
+      else if(cop_type2 == "gumbel"){
+        c = sapply(u, iRho, copula = gumbelCopula())
+        r_n = r
+      }
+      #sample data, which depends on the copula type
+      data_sample = surrogacy_sample_sens(ctrl_par, treat_par, n_prec,
+                                          knot, knot, knot, knot, 
+                                          c, r_n,
+                                          cop_type, restr = FALSE, cop_type2 = cop_type2)
+    
+      deltaS = data_sample$deltaS
+      deltaT = data_sample$deltaT
+      kendall[i] = cor.test(deltaS, deltaT, method = "kendall")$estimate
+      sp_rho[i] = cor.test(deltaS, deltaT, method = "spearman")$estimate
+      if(minfo_prec != 0){
+        a = rank(deltaS)/(n_prec+1)
+        b = rank(deltaT)/(n_prec+1)
+        temp_matrix = matrix(data = c(a,b), ncol = 2)
+        t_kde = kdecop(udata = temp_matrix, method = "TLL2")
+        temp = dep_measures(object = t_kde, n_qmc = minfo_prec, 
+                            measures = c("minfo", "kendall", "spearman"))
+        minfo[i] = temp[1]
+        kendall_n[i] = temp[2]
+        sp_rho_n[i] = temp[3]
+      }
+      n_prec_data[i] = n_prec
+      time_data[i] = time
+      cop_type_data[i] = cop_type2
+      minfo_prec_data[i] = minfo_prec
+      i = i + 1
+    }
+  }
+  times = 30
+}
+
+
+data_prec = data.frame(kendall = kendall, sp_rho = sp_rho, minfo = minfo,
+                       kendall_n = kendall_n, sp_rho_n = sp_rho_n,
+                       time = time_data, n_prec = n_prec_data, 
+                       cop_type2 = cop_type_data, minfo_prec = as.factor(minfo_prec_data))
+
+```
+
+```{r}
+data_prec %>% ggplot(aes(x = n_prec, y = sp_rho, color = minfo_prec)) +
+  geom_jitter(height = 0, width = 40, alpha = 0.5) + 
+  facet_wrap(.~cop_type2)
+data_prec %>% ggplot(aes(x = n_prec, y = kendall, color = minfo_prec)) +
+  geom_jitter(height = 0, width = 40, alpha = 0.5) + 
+  facet_wrap(.~cop_type2)
+data_prec %>% ggplot(aes(x = n_prec, y = sp_rho_n, color = minfo_prec)) +
+  geom_jitter(height = 0, width = 40, alpha = 0.5) + 
+  facet_wrap(.~cop_type2)
+data_prec %>% ggplot(aes(x = n_prec, y = kendall_n, color = minfo_prec)) +
+  geom_jitter(height = 0, width = 40, alpha = 0.5) + 
+  facet_wrap(.~cop_type2)
+data_prec %>% ggplot(aes(x = n_prec, y = 1 - exp(-2*minfo), color = minfo_prec)) +
+  geom_jitter(height = 0, width = 40, alpha = 0.5) + 
+  facet_wrap(.~cop_type2)
+```
+
+```{r}
+temp = data_prec %>% group_by(n_prec, cop_type2) %>%
+  summarise(m_rho = mean(sp_rho), sd_rho = sd(sp_rho), 
+            m_k = mean(kendall), sd_k = sd(kendall), 
+            m_i = mean(1 - exp(-2*minfo)), sd_i = sd(1 - exp(-2*minfo))) %>%
+   mutate_if(is.numeric,~round(., 3)) %>%
+   mutate(paste0(m_rho, " (", sd_rho, ")"),
+          paste0(m_k, " (", sd_k, ")"),
+          paste0(m_i, " (", sd_i, ")")) %>%
+  select(c(1, 2, 9:11))
+knitr::kable(x = temp, format = "latex")
+
+```
+
+
