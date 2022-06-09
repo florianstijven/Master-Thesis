@@ -1,7 +1,7 @@
 #Load files with necessary functions
 source(file = "Code/Base Functions/copula_SCR_fitting.R")
 source(file = "Code/Base Functions/copula_GOF.R")
-source(file = "Code/Base Functions/surrogacy_functions_new.R")
+source(file = "Code/Base Functions/surrogacy_functions.R")
 #load libraries
 library(flexsurv)
 library(Surrogate)
