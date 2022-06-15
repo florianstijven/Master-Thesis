@@ -17,8 +17,8 @@ library(latex2exp)
 #put data in correct format
 data = read.csv("DATA/Ovarian Cancer/ovarian.csv")
 data = data[,-1]
-data$Pfs = data$Pfs*12
-data$Surv = data$Surv*12
+data$Pfs = data$Pfs*360/52
+data$Surv = data$Surv*360/52
 
 #number of internal knots
 nknots = 3
@@ -110,7 +110,7 @@ data("Ovarian")
 data_pfs = Ovarian %>% select(Pfs, Surv, Treat, PfsInd, SurvInd)
 #filter observations that have impossible values, i.e. a PFS larger than OS
 data_pfs = data_pfs %>% filter(Pfs <= Surv)
-data_pfs = data_pfs %>% mutate(Pfs = 12*Pfs, Surv = 12*Surv)
+data_pfs = data_pfs %>% mutate(Pfs = Pfs*360/52, Surv = Surv*360/52)
 
 #fit models without time ordering
 fit_normal_no = fit_model(data_pfs, "gaussian", nknots)
@@ -192,11 +192,11 @@ model_comparison = bind_rows(model_comparison,
 
 
 
-grid = seq(0.01, 36, 0.1)
+grid = seq(0.01, 20, 0.1)
 png(filename = "Figures/GOF_ovarian.png", width = 650, height = 520)
 marginal_gof_scr(fit_clayton_0$par, fit_clayton_1$par, knots0, knots1, 
                  knott0, knott1,
-                 data, "clayton", grid)
+                 data_pfs, "clayton", grid)
 dev.off()
 png(filename = "Figures/GOF_ovarian_no.png", width = 650, height = 520)
 marginal_gof_no(fit_clayton_0_no$par, fit_clayton_1_no$par, 

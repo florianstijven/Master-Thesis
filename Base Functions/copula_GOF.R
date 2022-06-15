@@ -2,18 +2,17 @@ marginal_gof_scr = function(fit_0_par, fit_1_par,
                             knots0, knots1, knott0, knott1,
                             data, cop_type,
                             grid){
+  nknots = length(knots0)
   par(mfrow = c(2,2))
   #goodness of fit of marginal survival function of OS
-  Surv_t0 = 1 - psurvspline(q = grid, gamma = fit_0_par[5:8], knots = knott0)
-  KM_est = survfit(Surv(Surv, SurvInd)~1, data = data, subset = data$Treat == 0)
-  ggsurvplot(fit = KM_est, data = data) 
+  Surv_t0 = 1 - psurvspline(q = grid, gamma = fit_0_par[(nknots+1):(2*nknots)], knots = knott0)
   plot(survfit(Surv(Surv, SurvInd)~1, data = data, subset = data$Treat == 0),
-       xlim = c(min(grid), max(grid)), main = "OS (0)", xlab = "time (months)", ylab = "S(t)")
+       xlim = c(min(grid), max(grid)), main = "OS (0)", xlab = "time (years)", ylab = "S(t)")
   lines(grid, Surv_t0, col = "red")
 
-  Surv_t1 = 1 - psurvspline(q = grid, gamma = fit_1_par[5:8], knots = knott1)
+  Surv_t1 = 1 - psurvspline(q = grid, gamma = fit_1_par[(nknots+1):(2*nknots)], knots = knott1)
   plot(survfit(Surv(Surv, SurvInd)~1, data = data, subset = data$Treat == 1),
-       xlim = c(min(grid), max(grid)), main = "OS (1)", xlab = "time (months)", ylab = "S(t)")
+       xlim = c(min(grid), max(grid)), main = "OS (1)", xlab = "time (years)", ylab = "S(t)")
   lines(grid, Surv_t1, col = "red")
 
   #goodness of fit for marginal distribution of PFS
@@ -38,51 +37,47 @@ marginal_gof_scr = function(fit_0_par, fit_1_par,
     return(C)
   }
 
-  probs0 = sapply(grid, pfs_surv, gammas = fit_0_par[1:4], gammat = fit_0_par[5:8],
-                  knots = knots0, knott = knott0, theta = fit_0_par[9])
-  KM_est = survfit(Surv(data$Pfs, pmax(data$PfsInd, data$SurvInd))~1, data = data,
-                   subset = data$Treat == 0)
-  ggsurvplot(KM_est) +
-    scale_x_continuous(name = "time (months)",
-                       limits = c(min(grid), max(grid))) +
-    scale_y_continuous(name = "S(t)") +
-    geom_line(data = data.frame(grid = grid, probs0 = probs0),
-              aes(x = grid, y = probs0), color = "red")
-    ggtitle("PFS (0)")
+  probs0 = sapply(grid, pfs_surv, gammas = fit_0_par[1:nknots], gammat = fit_0_par[(nknots+1):(2*nknots)],
+                  knots = knots0, knott = knott0, theta = fit_0_par[2*nknots + 1])
+  plot(survfit(Surv(data$Pfs, pmax(data$PfsInd, data$SurvInd))~1, data = data,
+               subset = data$Treat == 0),
+       xlim = c(min(grid), max(grid)), main = "PFS (0)", xlab = "time (years)", ylab = "S(t)")
+  lines(grid, probs0, col = "red")
 
-  probs1 = sapply(grid, pfs_surv, gammas = fit_1_par[1:4], gammat = fit_1_par[5:8],
-                  knots = knots1, knott = knott1, theta = fit_1_par[9])
+  probs1 = sapply(grid, pfs_surv, gammas = fit_1_par[1:nknots], gammat = fit_1_par[(nknots+1):(2*nknots)],
+                  knots = knots1, knott = knott1, theta = fit_1_par[2*nknots + 1])
   plot(survfit(Surv(data$Pfs, pmax(data$PfsInd, data$SurvInd))~1, data = data,
                subset = data$Treat == 1),
-       xlim = c(min(grid), max(grid)), main = "PFS (1)", xlab = "time (months)", ylab = "S(t)")
+       xlim = c(min(grid), max(grid)), main = "PFS (1)", xlab = "time (years)", ylab = "S(t)")
   lines(grid, probs1, col = "red")
 }
 
 marginal_gof_no = function(fit_0_par, fit_1_par, 
                            knots0, knots1, knott0, knott1,
                            data, grid){
+  nknots = length(knots0)
   par(mfrow = c(2,2))
   #goodness of fit of marginal survival function of OS
-  Surv_t0 = 1 - psurvspline(q = grid, gamma = fit_0_par[5:8], knots = knott0)
+  Surv_t0 = 1 - psurvspline(q = grid, gamma = fit_0_par[(nknots+1):(2*nknots)], knots = knott0)
   plot(survfit(Surv(Surv, SurvInd)~1, data = data, subset = data$Treat == 0),
-       xlim = c(min(grid), max(grid)), main = "OS (0)", xlab = "time (months)", ylab = "S(t)")
+       xlim = c(min(grid), max(grid)), main = "OS (0)", xlab = "time (years)", ylab = "S(t)")
   lines(grid, Surv_t0, col = "red")
   
-  Surv_t1 = 1 - psurvspline(q = grid, gamma = fit_1_par[5:8], knots = knott1)
+  Surv_t1 = 1 - psurvspline(q = grid, gamma = fit_1_par[(nknots+1):(2*nknots)], knots = knott1)
   plot(survfit(Surv(Surv, SurvInd)~1, data = data, subset = data$Treat == 1),
-       xlim = c(min(grid), max(grid)), main = "OS (1)", xlab = "time (months)", ylab = "S(t)")
+       xlim = c(min(grid), max(grid)), main = "OS (1)", xlab = "time (years)", ylab = "S(t)")
   lines(grid, Surv_t1, col = "red")
   
-  probs0 = 1 - psurvspline(q = grid, gamma = fit_0_par[1:4], knots = knots0)
+  probs0 = 1 - psurvspline(q = grid, gamma = fit_0_par[1:nknots], knots = knots0)
   plot(survfit(Surv(data$Pfs, pmax(data_pfs$PfsInd, data_pfs$SurvInd))~1, data = data_pfs, 
                subset = data_pfs$Treat == 0),
-       xlim = c(min(grid), max(grid)), main = "PFS (0)", xlab = "time (months)", ylab = "S(t)")
+       xlim = c(min(grid), max(grid)), main = "PFS (0)", xlab = "time (years)", ylab = "S(t)")
   lines(grid, probs0, col = "red")
   
-  probs1 = 1 - psurvspline(q = grid, gamma = fit_1_par[1:4], knots = knots1)
+  probs1 = 1 - psurvspline(q = grid, gamma = fit_1_par[1:nknots], knots = knots1)
   plot(survfit(Surv(data_pfs$Pfs, pmax(data_pfs$PfsInd, data_pfs$SurvInd))~1, data = data_pfs, 
                subset = data_pfs$Treat == 1),
-       xlim = c(min(grid), max(grid)), main = "PFS (1)", xlab = "time (months)", ylab = "S(t)")
+       xlim = c(min(grid), max(grid)), main = "PFS (1)", xlab = "time (years)", ylab = "S(t)")
   lines(grid, probs1, col = "red")
 }
 
