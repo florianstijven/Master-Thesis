@@ -192,7 +192,7 @@ model_comparison = bind_rows(model_comparison,
 
 
 
-grid = seq(0.01, 20, 0.1)
+grid = seq(0.01, 15, 0.1)
 png(filename = "Figures/GOF_ovarian.png", width = 650, height = 520)
 marginal_gof_scr(fit_clayton_0$par, fit_clayton_1$par, knots0, knots1, 
                  knott0, knott1,
