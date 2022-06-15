@@ -166,7 +166,7 @@ sens_data_marg %>%
   filter(ordering == "Ordering") %>%
   ggplot(aes(x = ca, y = 1 - exp(-2*minfo), color = WCA)) +
   scale_x_continuous(limits = c(-1, 1), 
-                     name = TeX("$\\frac{\\tau_{S_0T_1} + \\tau_{S_1T_0}}{2}$")) +
+                     name = TeX("$\\frac{\\tau_{S_0^*, T_1} + \\tau_{S_1^*, T_0}}{2}$")) +
   scale_y_continuous(name = TeX("$\\R_h^2")) +
   geom_vline(xintercept = 0.816) +
   geom_point(alpha = 0.3) +
