@@ -19,7 +19,7 @@ The following functions are helper-functions that compute the log-likelihood, gi
 Above functions do not need to be used directly by the end-user.
 
 The fit_model function fits the model with following arguments:
-- data: R dataframe with the following rows (S, S event indicator, T, T event indicator, treatment indicator)
+- data: R dataframe with the following rows (S, T, treatment indicator, S event indicator, T event indicator)
 - cop_type: type of identifiable copula, one of the following:
   - "gaussian"
   - "clayton"
